@@ -397,3 +397,39 @@ export interface ImportHistoryItem {
   createdBy: string;
   createdAt: string;
 }
+
+// Roles & Permissions (F01c)
+export interface RoleItem {
+  roleCode: string;
+  roleName: string;
+  description: string | null;
+  factoryScope: 'ALL' | 'ASSIGNED';
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+  userCount: number;
+  permissionCount: number;
+}
+
+export interface PermissionCatalogItem {
+  permissionCode: string;
+  permissionName: string;
+  moduleCode: string;
+  moduleName: string;
+  description: string;
+  sortOrder: number;
+}
+
+export interface CreateRolePayload {
+  roleCode: string;
+  roleName: string;
+  description?: string;
+  factoryScope: 'ALL' | 'ASSIGNED';
+  permissionCodes?: string[];
+}
+
+export interface UpdateRolePayload {
+  roleName: string;
+  description?: string;
+  factoryScope: 'ALL' | 'ASSIGNED';
+}

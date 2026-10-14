@@ -8,6 +8,7 @@ import {
   Lock,
   Database,
   UploadCloud,
+  ShieldCheck,
   Layers,
   ChevronRight,
 } from 'lucide-react';
@@ -58,6 +59,12 @@ export const Sidebar: React.FC = () => {
       label: 'Nạp dữ liệu ERP',
       subLabel: 'Bộ 5 file ngày chốt & Forecast',
       icon: UploadCloud,
+    },
+    {
+      to: '/roles',
+      label: 'Vai trò & Phân quyền',
+      subLabel: 'Ma trận 27 quyền & Roles (F01c)',
+      icon: ShieldCheck,
     },
   ];
 

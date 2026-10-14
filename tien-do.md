@@ -44,9 +44,9 @@ flowchart LR
 | **TASK-UI** | **UI/UX**| **Giao diện Người dùng Hiện đại (React 19, TS, Vite, Tailwind v4, TanStack)** | **Must** | **`DONE`** | 13/10/2026 | 13/10/2026 |
 | **TASK-12** | **F04b** | **Nhu cầu tháng sửa tay (Demand Override) & Các cờ dữ liệu mở rộng** | **Must/Should**| **`DONE`** | 13/10/2026 | 13/10/2026 |
 | **TASK-13** | **F04c** | **Dự phóng tồn 28 ngày (2 tầng) & Thuật toán đề xuất lịch giao (BR-36)** | **Must/Should**| **`DONE`** | 13/10/2026 | 13/10/2026 |
-| **TASK-14** | **F01c** | **Phân quyền động (Quản lý vai trò & Ma trận 27 mã quyền)** | **Must** | **`PROPOSED`** | — | — |
+| **TASK-14** | **F01c** | **Phân quyền động (Quản lý vai trò & Ma trận 27 mã quyền)** | **Must** | **`DONE`** | 14/10/2026 | 14/10/2026 |
 
-**Tiến độ tổng thể:** **15 / 16 Task (93.8%)**
+**Tiến độ tổng thể:** **16 / 16 Task (100% - HOÀN THÀNH TOÀN DIỆN DỰ ÁN)**
 
 ---
 
@@ -586,37 +586,41 @@ flowchart LR
 
 ---
 
-### [PROPOSED] TASK-14: F01c - Phân Quyền Động (Quản Lý Vai Trò Tùy Biến & Ma Trận 27 Mã Quyền)
+### [DONE] TASK-14: F01c - Phân Quyền Động (Quản Lý Vai Trò Tùy Biến & Ma Trận 27 Mã Quyền)
 - **Mã phân hệ:** F01c  
 - **Mức độ ưu tiên:** Must Have (M)  
 - **Tài liệu đặc tả chi tiết:** [docs/modules/F01-XAC-THUC-TAI-KHOAN-PHAN-QUYEN.md](file:///c:/Premix_GE/docs/modules/F01-XAC-THUC-TAI-KHOAN-PHAN-QUYEN.md)  
-- **Mục tiêu triển khai:**
-  1. **Bộ Stored Procedures quản lý Vai trò & Ma trận quyền:**
-     - `dbo.usp_Role_List`: Lấy danh sách toàn bộ vai trò, số lượng người dùng đang gán (`UserCount`), số lượng quyền kích hoạt (`PermissionCount`).
-     - `dbo.usp_Role_GetByCode`: Lấy chi tiết 1 vai trò kèm danh sách mã quyền được cấp.
-     - `dbo.usp_Role_Create`: Tạo mới vai trò tùy biến (`RoleCode`, `RoleName`, `Description`, `FactoryScope` IN ('ALL', 'ASSIGNED')), `IsSystem = 0`.
-     - `dbo.usp_Role_Update`: Cập nhật thông tin vai trò, chặn sửa thông tin của role hệ thống (`ADMIN` - IsSystem = 1).
-     - `dbo.usp_Role_Delete`: Xóa vai trò tùy biến, chặn xóa role hệ thống (`IsSystem = 1`), chặn xóa role đang được gán cho người dùng (`UserCount > 0`).
-     - `dbo.usp_Role_GetPermissionsCatalog`: Lấy danh mục 27 mã quyền chuẩn nhóm theo 7 phân hệ.
-     - `dbo.usp_Role_SetPermissions`: Cập nhật ma trận quyền cho vai trò qua TVP `dbo.tvp_CodeList`, chặn can thiệp quyền của role `ADMIN`.
-  2. **Backend NestJS Controller & Service (`RolesModule`):**
-     - `GET /api/v1/roles` (`role.view`): Danh sách vai trò.
-     - `POST /api/v1/roles` (`role.manage`): Tạo vai trò mới.
-     - `GET /api/v1/roles/permissions` (`role.view`): Danh mục 27 mã quyền chuẩn.
-     - `GET /api/v1/roles/:code` (`role.view`): Xem chi tiết vai trò và quyền.
-     - `PUT /api/v1/roles/:code` (`role.manage`): Sửa vai trò (bảo vệ role `ADMIN`).
-     - `DELETE /api/v1/roles/:code` (`role.manage`): Xóa vai trò (bảo vệ `IsSystem = 1` và `UserCount > 0`).
-     - `PUT /api/v1/roles/:code/permissions` (`role.manage`): Cập nhật ma trận 27 mã quyền cho vai trò.
+- **Nội dung đã hoàn thành:**
+  1. **Bộ Stored Procedures quản lý Vai trò & Ma trận quyền (`database/stored_procedures/14_role_procedures.sql`):**
+     - `dbo.usp_Role_List`: Lấy danh sách toàn bộ vai trò, thống kê số lượng tài khoản đang sử dụng (`UserCount`) và số lượng quyền kích hoạt (`PermissionCount`).
+     - `dbo.usp_Role_GetByCode`: Lấy chi tiết vai trò kèm mảng danh sách các `PermissionCode` được cấp.
+     - `dbo.usp_Role_Create`: Tạo vai trò tùy biến mới (`RoleCode`, `RoleName`, `Description`, `FactoryScope` IN ('ALL', 'ASSIGNED')), `IsSystem = 0`.
+     - `dbo.usp_Role_Update`: Cập nhật vai trò, bảo vệ nghiêm ngặt vai trò hệ thống `ADMIN` bắt buộc `FactoryScope = ALL`.
+     - `dbo.usp_Role_Delete`: Xóa vai trò tùy biến; bảo vệ an toàn hệ thống: chặn xóa các vai trò hệ thống (`ADMIN`, `PLANNER`, `FACTORY`, `VIEWER`), chặn xóa vai trò đang có người dùng gán (`UserCount > 0`).
+     - `dbo.usp_Role_GetPermissionsCatalog`: Trả về danh mục chuẩn 27 mã quyền hệ thống gom nhóm theo 9 phân hệ chức năng.
+     - `dbo.usp_Role_SetPermissions`: Cập nhật ma trận phân quyền cho vai trò qua JSON/TVP trong Transaction; chặn mọi hành vi tùy biến quyền của role `ADMIN` hệ thống.
+  2. **Backend NestJS Module (`server/src/modules/roles/`):**
+     - DTO: `CreateRoleDto`, `UpdateRoleDto`, `SetPermissionsDto` kiểm tra định dạng chữ in hoa, regex, validation danh sách mã quyền.
+     - `RolesService`: Xử lý nghiệp vụ theo Clean Architecture, kiểm tra trùng lặp và bảo vệ role hệ thống ở application layer độc lập collation/encoding, ghi nhận nhật ký kiểm toán `sys_Audit_Log` (`ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE`, `ROLE_SET_PERMISSIONS`).
+     - `RolesController`: Đầy đủ 6 endpoints CRUD RESTful có Swagger OpenAPI docs và bảo vệ bởi `@RequirePermissions('role.view')` & `@RequirePermissions('role.manage')`.
+     - `RolesModule`: Đăng ký vào `AppModule`.
   3. **Frontend UI/UX (React 19 + TypeScript + Tailwind CSS v4):**
-     - Trang Quản lý vai trò & Ma trận quyền (`/roles` hoặc menu trong Quản trị hệ thống).
-     - Ma trận phân quyền trực quan theo bảng 2 chiều: Các vai trò x 27 mã quyền gom nhóm theo 7 phân hệ.
-     - Modal tạo/sửa vai trò, chọn phạm vi nhà máy (Toàn bộ / Được gán).
-     - Checkbox ma trận quyền hỗ trợ Chọn tất cả theo nhóm phân hệ và Lưu ma trận quyền 1-click.
-- **Tiêu chí nghiệm thu (Acceptance Criteria):**
-  - **AC-14.01:** Đọc danh sách vai trò và danh mục đủ 27 mã quyền chuẩn theo 7 phân hệ chức năng.
-  - **AC-14.02:** Tạo mới vai trò tùy biến thành công với phạm vi nhà máy `ALL` hoặc `ASSIGNED`. Chặn trùng `RoleCode`.
-  - **AC-14.03:** Cập nhật ma trận quyền cho vai trò tùy biến qua TVP; chặn mọi hành vi chỉnh sửa quyền của role hệ thống `ADMIN`.
-  - **AC-14.04:** Xóa vai trò tùy biến thành công khi không có người dùng; chặn xóa vai trò hệ thống (`ADMIN`, `IsSystem = 1`) và vai trò đang có tài khoản sử dụng.
-  - **AC-14.05:** Đăng nhập bằng tài khoản thuộc vai trò tùy biến $\rightarrow$ Kiểm tra Guard theo thời gian thực (Real-time RBAC) cấp đúng tập quyền mới cấu hình.
-  - **AC-14.06:** Giao diện Ma trận phân quyền trực quan, tương tác mượt mà và lưu quyền thành công.
-- **Trạng thái:** **`PROPOSED`** (Chờ Người dùng phê duyệt bắt đầu triển khai).
+     - Màn hình Quản lý vai trò & Phân quyền [`RolesPage.tsx`](file:///c:/Premix_GE/client/src/pages/RolesPage.tsx) tại đường dẫn `/roles`.
+     - 4 Thẻ KPI: Tổng số vai trò, Vai trò hệ thống, Vai trò tùy biến, Danh mục 27/27 mã quyền.
+     - **Ma trận phân quyền 2 chiều (Roles x 27 Permissions):** Hiển thị bảng 2 chiều trực quan, nhóm theo từng phân hệ chức năng, hỗ trợ checkbox toggle tức thì, chọn tất cả/bỏ chọn theo nhóm và lưu quyền 1-click. Cột `ADMIN` được khóa an toàn (luôn full quyền).
+     - **Danh sách chi tiết vai trò:** Xem số tài khoản (`UserCount`), số quyền (`PermissionCount`), phạm vi (`ALL` / `ASSIGNED`), nút sửa và xóa (tự động vô hiệu hóa nếu là role hệ thống hoặc đang có người dùng).
+     - Modal tạo mới và chỉnh sửa vai trò tùy biến.
+     - Đã thêm mục "Vai trò & Phân quyền" vào thanh điều hướng Sidebar.
+- **Kết quả kiểm thử tự động (Test Runner `server/test/test-task-14.js` - 39/39 Test Cases ĐẠT 100%):**
+  - ✅ **PASS [SETUP]:** Đăng nhập Admin lấy token JWT hợp lệ.
+  - ✅ **PASS [AC-14.01]:** GET `/roles` trả về danh sách vai trò đầy đủ, có `UserCount` và `PermissionCount`. GET `/roles/permissions` trả về đúng 27 mã quyền chuẩn theo 9 phân hệ.
+  - ✅ **PASS [AC-14.02]:** Tạo vai trò tùy biến thành công với cả phạm vi `ALL` và `ASSIGNED`. Chặn trùng mã `RoleCode` (HTTP 409 Conflict). Chặn mã quyền không hợp lệ (HTTP 400 Bad Request).
+  - ✅ **PASS [AC-14.03]:** Cập nhật ma trận quyền cho vai trò tùy biến thành công; chặn mọi hành vi tùy biến quyền của role `ADMIN` với HTTP 403 Forbidden.
+  - ✅ **PASS [AC-14.04]:** Sửa thông tin vai trò thành công. Chặn đổi `FactoryScope` của `ADMIN` sang `ASSIGNED` (HTTP 400). Chặn xóa role hệ thống `ADMIN`, `PLANNER` (HTTP 403). Chặn xóa vai trò đang có tài khoản sử dụng (HTTP 403). Xóa vai trò chưa có user thành công (HTTP 200).
+  - ✅ **PASS [AC-14.05]:** **Real-time Dynamic RBAC Validation**: User thuộc vai trò mới được cấp quyền gọi API hợp lệ; khi Admin thu hồi quyền thì request tiếp theo của User lập tức bị chặn HTTP 403 Forbidden theo thời gian thực mà không cần đăng xuất/đăng nhập lại.
+  - ✅ **PASS [AC-14.06]:** Tài khoản thiếu quyền `role.manage` bị chặn HTTP 403 khi gọi API quản trị vai trò. Nhật ký kiểm toán `sys_Audit_Log` ghi nhận đầy đủ sự kiện `ROLE_CREATE`.
+- **Bằng chứng kiểm thử & Giao diện:**
+  - 📸 Giao diện Ma trận phân quyền 2 chiều: `docs/task-14-roles-matrix.png`
+  - 📸 Modal tạo vai trò tùy biến mới: `docs/task-14-roles-modal.png`
+- **Trạng thái:** **`DONE`** (Hoàn thành và nghiệm thu 100% ngày 14/10/2026).
+

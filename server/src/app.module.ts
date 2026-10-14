@@ -13,6 +13,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { BlocksModule } from './modules/blocks/blocks.module.js';
 import { DeliveryPlansModule } from './modules/delivery-plans/delivery-plans.module.js';
 import { PurchaseRequestsModule } from './modules/purchase-requests/purchase-requests.module.js';
+import { RolesModule } from './modules/roles/roles.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { PurchaseRequestsModule } from './modules/purchase-requests/purchase-req
     HealthModule,
     AuthModule,
     UsersModule,
+    RolesModule,
     AuditModule,
     CatalogModule,
     ImportModule,

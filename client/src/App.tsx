@@ -11,6 +11,7 @@ import { PurchaseRequestsPage } from './pages/PurchaseRequestsPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { CatalogPage } from './pages/CatalogPage';
 import { ImportPage } from './pages/ImportPage';
+import { RolesPage } from './pages/RolesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,6 +39,7 @@ export const App: React.FC = () => {
               <Route path="blocks" element={<BlocksPage />} />
               <Route path="catalog" element={<CatalogPage />} />
               <Route path="import" element={<ImportPage />} />
+              <Route path="roles" element={<RolesPage />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
