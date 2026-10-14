@@ -553,6 +553,7 @@ export class DeliveryPlansService {
             averageFillRatePct: consolidationResult.averageFillRatePct,
             tripsSavedCount: consolidationResult.tripsSavedCount,
           },
+          costAnalysis: consolidationResult.costAnalysis,
           trips: consolidationResult.trips,
           suggestedPlans,
         };

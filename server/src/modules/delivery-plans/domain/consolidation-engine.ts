@@ -64,6 +64,21 @@ export interface ConsolidatedTrip {
   tripNotes: string;
 }
 
+export interface AcademicJrpCostModel {
+  individualTripsCount: number;
+  individualEstimatedCostVnd: number;
+  consolidatedTripsCount: number;
+  consolidatedCostVnd: number;
+  costSavingsVnd: number;
+  costSavingsPct: number;
+  canOrderPolicy: {
+    mustOrderThresholdDesc: string;
+    canOrderThresholdDesc: string;
+    orderUpToLevelDesc: string;
+    fixedCostPerTripVnd: Record<TruckloadTier, number>;
+  };
+}
+
 export interface ConsolidationEngineResult {
   weekStartDate: string;
   factoryId: number;
@@ -73,6 +88,7 @@ export interface ConsolidationEngineResult {
   averageFillRatePct: number;
   tripsSavedCount: number;
   trips: ConsolidatedTrip[];
+  costAnalysis: AcademicJrpCostModel;
 }
 
 // Định mức tải trọng xe tải chuẩn (Kg)
@@ -81,6 +97,14 @@ export const TRUCK_CAPACITIES: Record<TruckloadTier, number> = {
   '10T': 10000,
   '15T': 15000,
   '30T_BULK': 30000,
+};
+
+// Chi phí vận chuyển cố định ước tính theo chuyến (VNĐ / chuyến)
+export const TRUCK_FIXED_COSTS: Record<TruckloadTier, number> = {
+  '5T': 900000,
+  '10T': 1400000,
+  '15T': 1800000,
+  '30T_BULK': 3000000,
 };
 
 const DAY_NAMES = [
@@ -376,7 +400,7 @@ export function consolidateDeliveries(
     }
   }
 
-  // 3. Tính toán các chỉ số tổng hợp
+  // 3. Tính toán các chỉ số tổng hợp và Mô hình Chi phí Học thuật (JRP Cost Model)
   const totalVolumeKg = generatedTrips.reduce((sum, t) => sum + t.totalTripKg, 0);
   const totalTrips = generatedTrips.length;
   const averageFillRatePct =
@@ -390,6 +414,31 @@ export function consolidateDeliveries(
 
   const tripsSavedCount = Math.max(0, individualTripsCount - totalTrips);
 
+  // Tính chi phí kịch bản đơn lẻ (không gom, mỗi mã thiếu tự điều xe)
+  let individualEstimatedCostVnd = 0;
+  for (const item of items) {
+    if (item.stdDailyKg > 0 && item.currentStockKg < (item.stdDailyKg * (item.safetyDays || 7))) {
+      const deficit = Math.max(0, (item.stdDailyKg * (item.safetyDays || 7)) - item.currentStockKg + item.stdDailyKg * 7);
+      const singleTier = selectBestTruckTier(deficit, item.isBulk || false);
+      individualEstimatedCostVnd += TRUCK_FIXED_COSTS[singleTier];
+    }
+  }
+  if (individualEstimatedCostVnd === 0 && individualTripsCount > 0) {
+    individualEstimatedCostVnd = individualTripsCount * TRUCK_FIXED_COSTS['10T'];
+  }
+
+  // Tính chi phí kịch bản gom chuyến (JRP)
+  const consolidatedCostVnd = generatedTrips.reduce(
+    (sum, trip) => sum + (TRUCK_FIXED_COSTS[trip.truckloadTier] || TRUCK_FIXED_COSTS['15T']),
+    0,
+  );
+
+  const costSavingsVnd = Math.max(0, individualEstimatedCostVnd - consolidatedCostVnd);
+  const costSavingsPct =
+    individualEstimatedCostVnd > 0
+      ? Number(((costSavingsVnd / individualEstimatedCostVnd) * 100).toFixed(1))
+      : 0;
+
   return {
     weekStartDate,
     factoryId,
@@ -399,6 +448,20 @@ export function consolidateDeliveries(
     averageFillRatePct,
     tripsSavedCount,
     trips: generatedTrips,
+    costAnalysis: {
+      individualTripsCount,
+      individualEstimatedCostVnd,
+      consolidatedTripsCount: totalTrips,
+      consolidatedCostVnd,
+      costSavingsVnd,
+      costSavingsPct,
+      canOrderPolicy: {
+        mustOrderThresholdDesc: 's_i: Mức kích hoạt bắt buộc khi tồn chạm ngưỡng an toàn L = d * SafetyDays',
+        canOrderThresholdDesc: 'c_i: Mức có thể đặt kèm khi tồn rơi vào vùng dự phòng 7-14 ngày để lấp đầy xe',
+        orderUpToLevelDesc: 'S_i: Mức trần bổ sung tối đa theo tải trọng xe (15T / 30T) và ngưỡng Overstock',
+        fixedCostPerTripVnd: TRUCK_FIXED_COSTS,
+      },
+    },
   };
 }
 
