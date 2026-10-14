@@ -964,8 +964,8 @@ export class PositionsService {
     const projectionResult = calculate28DayProjection({
       snapshotDate: resolvedSnapshotDate || '2026-10-06',
       initialStockKg: pos.availableKg,
-      stdDailyKg: pos.stdDailyKg,
-      bagKg: Number(pairMeta.bagKg || 25),
+      dailyDemandKg: pos.dailyKg,
+      bagKg: pairMeta.bagKg != null ? Number(pairMeta.bagKg) : null,
       category: pairMeta.category || '',
       itemGroup: pairMeta.itemGroup || '',
       thresholds,

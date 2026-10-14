@@ -117,15 +117,53 @@ BEGIN
             WHERE IsActive = 1
             ORDER BY SupplierID ASC
         ),
-        -- Tiêu hao ngày từ Dự báo nhu cầu mới nhất
-        ForecastDemand AS (
+        SystemCfg AS (
+            SELECT TOP 1
+                CriticalDays,
+                WarningDays,
+                OverstockDays,
+                ISNULL(StandardMonthDays, 28) AS StandardMonthDays,
+                ISNULL(DeliveryDays, 7) AS DeliveryDays,
+                ISNULL(BulkDeliveryKg, 30000) AS BulkDeliveryKg
+            FROM dbo.cfg_System
+            WHERE ConfigID = 1
+        ),
+        -- Tiêu hao ngày từ Dự báo nhu cầu hoặc Điều chỉnh nhu cầu (BR-05, BR-08, BR-14)
+        LatestForecastVersion AS (
             SELECT
                 df.MaterialID,
-                CAST(ROUND(AVG(df.ForecastKg) / 30.0, 2) AS DECIMAL(18,2)) AS DailyDemandKg
+                df.ForecastKg,
+                ROW_NUMBER() OVER(PARTITION BY df.MaterialID ORDER BY df.VersionDate DESC, df.ForecastID DESC) AS rn
             FROM dbo.fact_Demand_Forecast df
             WHERE df.FactoryID = @FactoryID
-              AND df.PeriodMonth >= DATEFROMPARTS(YEAR(@WeekStart), MONTH(@WeekStart), 1)
-            GROUP BY df.MaterialID
+              AND df.PeriodMonth = DATEFROMPARTS(YEAR(@WeekStart), MONTH(@WeekStart), 1)
+              AND df.VersionDate <= ISNULL(@LatestSnapshot, '2099-12-31')
+        ),
+        ActiveDemandOverride AS (
+            SELECT
+                ov.MaterialID,
+                ov.OverrideKg,
+                ROW_NUMBER() OVER(PARTITION BY ov.MaterialID ORDER BY ov.EffectiveDate DESC, ov.OverrideID DESC) AS rn
+            FROM dbo.fact_Demand_Override ov
+            WHERE ov.FactoryID = @FactoryID
+              AND ov.PeriodMonth = DATEFROMPARTS(YEAR(@WeekStart), MONTH(@WeekStart), 1)
+              AND ov.EffectiveDate <= ISNULL(@LatestSnapshot, '2099-12-31')
+        ),
+        ForecastDemand AS (
+            SELECT
+                m.MaterialID,
+                CAST(ROUND(
+                    COALESCE(
+                        ov.OverrideKg,
+                        lf.ForecastKg,
+                        0.0
+                    ) / CAST(sys.StandardMonthDays AS DECIMAL(18,2)),
+                    2
+                ) AS DECIMAL(18,2)) AS DailyDemandKg
+            FROM dbo.dim_Material m
+            CROSS JOIN SystemCfg sys
+            LEFT JOIN LatestForecastVersion lf ON m.MaterialID = lf.MaterialID AND lf.rn = 1
+            LEFT JOIN ActiveDemandOverride ov ON m.MaterialID = ov.MaterialID AND ov.rn = 1
         ),
         -- Tồn kho bị khóa (nếu có)
         BlockedStock AS (
@@ -154,16 +192,17 @@ BEGIN
             COALESCE(pos.LeadTimeDays, prs.LeadTimeDays, fs.LeadTimeDays, 7) AS LeadTimeDays,
             -- Tồn kho khả dụng = SOH - Blocked
             ISNULL(soh.SohQtyKg, 0) - ISNULL(blk.BlockedQtyKg, 0) AS CurrentSohKg,
-            -- Tiêu hao ngày trung bình (d)
-            ISNULL(fc.DailyDemandKg, 500.0) AS DailyDemandKg,
-            -- Ngưỡng tồn kho
-            ISNULL(th.SafetyDays, 3.0) AS SafetyDays,
-            ISNULL(th.WarningDays, 5) AS WarningDays,
-            ISNULL(th.OverstockDays, 25) AS OverstockDays,
-            ISNULL(th.DeliveryDays, 7.0) AS DeliveryDays,
+            -- Tiêu hao ngày trung bình (d) theo BR-05, BR-08
+            ISNULL(fc.DailyDemandKg, 0.0) AS DailyDemandKg,
+            -- Ngưỡng tồn kho từ bảng cấu hình hoặc hệ thống
+            ISNULL(th.SafetyDays, sys.CriticalDays) AS SafetyDays,
+            ISNULL(th.WarningDays, sys.WarningDays) AS WarningDays,
+            ISNULL(th.OverstockDays, sys.OverstockDays) AS OverstockDays,
+            ISNULL(th.DeliveryDays, sys.DeliveryDays) AS DeliveryDays,
             ISNULL(th.DeliveryQtyKg, 0) AS DeliveryQtyKg
         FROM dbo.dim_Factory_Material fm
         INNER JOIN dbo.dim_Material m ON fm.MaterialID = m.MaterialID
+        CROSS JOIN SystemCfg sys
         LEFT JOIN RecentPoSuppliers pos ON fm.FactoryID = pos.FactoryID AND fm.MaterialID = pos.MaterialID AND pos.rn = 1
         LEFT JOIN RecentReceiptSuppliers prs ON fm.FactoryID = prs.FactoryID AND fm.MaterialID = prs.MaterialID AND prs.rn = 1
         CROSS JOIN FirstActiveSupplier fs

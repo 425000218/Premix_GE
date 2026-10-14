@@ -162,7 +162,7 @@ BEGIN
           AND p.FactoryID = @FactoryID
           AND p.MaterialID = @MaterialID
           AND p.DeliverRemainderKg > 0
-        ORDER BY p.DeliveryDate ASC, p.PoPendingID ASC;
+        ORDER BY p.DeliveryDate ASC, p.PONumber ASC;
 
     END TRY
     BEGIN CATCH

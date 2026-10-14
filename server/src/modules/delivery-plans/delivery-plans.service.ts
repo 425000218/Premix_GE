@@ -10,6 +10,10 @@ import {
   runConsolidationEngine,
 } from './domain/consolidation-engine.js';
 import {
+  suggestDeliveriesForPair,
+  addDaysIso,
+} from './domain/suggest-deliveries.js';
+import {
   GetPoOptionsQueryDto,
   GetWeekPlanQueryDto,
   PlanItemDto,
@@ -420,50 +424,59 @@ export class DeliveryPlansService {
    */
   async suggestWeekPlans(userId: number, dto: SuggestPlanDto) {
     try {
+      const sets = await this.procedureService.executeMultiSetProcedure(
+        'dbo.usp_DeliveryPlan_GetConsolidationData',
+        {
+          UserID: userId,
+          FactoryID: dto.factoryId,
+          WeekStartDate: dto.weekStartDate,
+          MaterialID: dto.materialId ?? null,
+        },
+      );
+
+      const factoryMeta = sets[0]?.[0] || {};
+      const rawItems = sets[1] || [];
+      const rawPos = sets[2] || [];
+      const rawExistingPlans = sets[3] || [];
+      const weekEndDate = factoryMeta.WeekEndDate || addDaysIso(dto.weekStartDate, 6);
+
+      // Nhóm Open POs theo MaterialID
+      const posByMaterial = new Map<number, any[]>();
+      for (const po of rawPos) {
+        const mId = Number(po.MaterialID);
+        if (!posByMaterial.has(mId)) {
+          posByMaterial.set(mId, []);
+        }
+        posByMaterial.get(mId)!.push({
+          poPendingId: Number(po.PoPendingID),
+          poNumber: po.PONumber ? po.PONumber.trim() : '',
+          deliveryDate: this.toIsoDate(po.DeliveryDate),
+          supplierId: po.SupplierID ? Number(po.SupplierID) : undefined,
+          supplierCode: po.SupplierCode,
+          supplierName: po.SupplierName,
+          leadTimeDays: Number(po.LeadTimeDays || 7),
+          deliverRemainderKg: Number(po.DeliverRemainderKg || 0),
+        });
+      }
+
+      // Nhóm Existing Plans theo MaterialID
+      const existingPlansByMaterial = new Map<number, any[]>();
+      for (const plan of rawExistingPlans) {
+        const mId = Number(plan.MaterialID);
+        if (!existingPlansByMaterial.has(mId)) {
+          existingPlansByMaterial.set(mId, []);
+        }
+        existingPlansByMaterial.get(mId)!.push({
+          planId: Number(plan.PlanID),
+          planDate: this.toIsoDate(plan.PlanDate),
+          poNumber: plan.PONumber ? plan.PONumber.trim() : null,
+          supplierId: plan.SupplierID ? Number(plan.SupplierID) : undefined,
+          planQtyKg: Number(plan.PlanQtyKg || 0),
+        });
+      }
+
+      // NHÁNH 1: Mô phỏng gom chuyến xe tải (JRP Consolidation)
       if (dto.consolidateBySupplier) {
-        const sets = await this.procedureService.executeMultiSetProcedure(
-          'dbo.usp_DeliveryPlan_GetConsolidationData',
-          {
-            UserID: userId,
-            FactoryID: dto.factoryId,
-            WeekStartDate: dto.weekStartDate,
-            MaterialID: dto.materialId ?? null,
-          },
-        );
-
-        const factoryMeta = sets[0]?.[0] || {};
-        const rawItems = sets[1] || [];
-        const rawPos = sets[2] || [];
-        const rawExistingPlans = sets[3] || [];
-
-        // Nhóm Open POs theo MaterialID
-        const posByMaterial = new Map<number, any[]>();
-        for (const po of rawPos) {
-          const mId = Number(po.MaterialID);
-          if (!posByMaterial.has(mId)) {
-            posByMaterial.set(mId, []);
-          }
-          posByMaterial.get(mId)!.push({
-            poNumber: po.PONumber,
-            remainQtyKg: Number(po.DeliverRemainderKg || 0),
-            etaDate: this.toIsoDate(po.DeliveryDate),
-          });
-        }
-
-        // Nhóm Existing Plans theo MaterialID
-        const existingPlansByMaterial = new Map<number, any[]>();
-        for (const plan of rawExistingPlans) {
-          const mId = Number(plan.MaterialID);
-          if (!existingPlansByMaterial.has(mId)) {
-            existingPlansByMaterial.set(mId, []);
-          }
-          existingPlansByMaterial.get(mId)!.push({
-            planDate: this.toIsoDate(plan.PlanDate),
-            planQtyKg: Number(plan.PlanQtyKg || 0),
-          });
-        }
-
-        // Tạo consolidation inputs cho pure domain engine
         const consolidationInputItems: ConsolidationInputItem[] = rawItems.map((r: any) => {
           const mId = Number(r.MaterialID);
           const isBulk =
@@ -478,12 +491,19 @@ export class DeliveryPlansService {
             supplierName: r.SupplierName,
             bagKg: r.BagKg != null ? Number(r.BagKg) : 25,
             isBulk,
-            stdDailyKg: Number(r.DailyDemandKg || 500),
+            stdDailyKg: Number(r.DailyDemandKg || 0),
             currentStockKg: Number(r.CurrentSohKg || 0),
-            safetyDays: Number(r.SafetyDays || 3),
-            warningDays: Number(r.WarningDays || 5),
-            openPos: posByMaterial.get(mId) || [],
-            existingPlans: existingPlansByMaterial.get(mId) || [],
+            safetyDays: Number(r.SafetyDays || 7),
+            warningDays: Number(r.WarningDays || 15),
+            openPos: (posByMaterial.get(mId) || []).map((p) => ({
+              poNumber: p.poNumber,
+              remainQtyKg: p.deliverRemainderKg,
+              etaDate: p.deliveryDate,
+            })),
+            existingPlans: (existingPlansByMaterial.get(mId) || []).map((p) => ({
+              planDate: p.planDate,
+              planQtyKg: p.planQtyKg,
+            })),
           };
         });
 
@@ -493,7 +513,6 @@ export class DeliveryPlansService {
           consolidationInputItems,
         );
 
-        // Chuyển các chuyến xe gom thành suggestedPlans phẳng để tương thích lưới tuần
         const suggestedPlans: any[] = [];
         for (const trip of consolidationResult.trips) {
           for (const item of trip.items) {
@@ -522,6 +541,7 @@ export class DeliveryPlansService {
 
         return {
           weekStartDate: dto.weekStartDate,
+          weekEndDate,
           factoryId: dto.factoryId,
           factoryCode: factoryMeta.FactoryCode,
           factoryName: factoryMeta.FactoryName,
@@ -538,82 +558,59 @@ export class DeliveryPlansService {
         };
       }
 
-      // 1. Lấy dữ liệu tuần hiện tại (kế hoạch đã lưu, open POs)
-      const weekData = await this.getWeekPlan(userId, {
-        weekStartDate: dto.weekStartDate,
-        factoryId: dto.factoryId,
-        materialId: dto.materialId,
-      });
-
-      const days = weekData?.days || this.generateWeekDates(dto.weekStartDate);
+      // NHÁNH 2: Luồng cốt lõi theo Q-051 & BR-36b: Đề xuất độc lập từng cặp cho mọi vật tư trong bộ lọc
       const suggestedPlans: any[] = [];
 
-      // 2. Với các cặp chưa có kế hoạch hoặc còn PO mở, đề xuất chuyến giao nháp
-      if (dto.materialId) {
-        const poOptions = await this.getPoOptions({
-          factoryId: dto.factoryId,
-          materialId: dto.materialId,
+      for (const item of rawItems) {
+        const mId = Number(item.MaterialID);
+        const itemOpenPos = posByMaterial.get(mId) || [];
+        const itemExistingPlans = existingPlansByMaterial.get(mId) || [];
+
+        const pairResult = suggestDeliveriesForPair({
+          snapshotDate: factoryMeta.LatestSnapshotDate || dto.weekStartDate,
+          initialStockKg: Number(item.CurrentSohKg || 0),
+          dailyDemandKg: Number(item.DailyDemandKg || 0),
+          safetyDays: Number(item.SafetyDays || 7),
+          criticalDays: 7,
+          horizonStartDate: dto.weekStartDate,
+          horizonEndDate: weekEndDate,
+          bagKg: item.BagKg != null ? Number(item.BagKg) : 25,
+          category: item.Category || '',
+          itemGroup: item.ItemGroup || '',
+          deliveryDaysPair: item.DeliveryDays ? Number(item.DeliveryDays) : undefined,
+          deliveryQtyKgPair: item.DeliveryQtyKg ? Number(item.DeliveryQtyKg) : undefined,
+          existingPlans: itemExistingPlans,
+          transferOrders: [],
+          openPos: itemOpenPos,
         });
 
-        if (poOptions.length > 0) {
-          const po = poOptions[0];
-          const hasExisting = weekData?.items?.some(
-            (it: any) => it.poNumber === po.poNumber && it.weeklySummary.totalPlanKg > 0,
-          );
-
-          if (!hasExisting && po.deliverRemainderKg > 0) {
-            const suggestDate = days[2] || days[0]; // Mặc định Thứ 4 (days[2])
-            suggestedPlans.push({
-              isSuggested: true,
-              planDate: suggestDate,
-              factoryId: dto.factoryId,
-              materialId: dto.materialId,
-              supplierId: po.supplierId,
-              supplierCode: po.supplierCode,
-              supplierName: po.supplierName,
-              poNumber: po.poNumber,
-              planQtyKg: po.deliverRemainderKg,
-              planQtyTons: po.deliverRemainderTons,
-              note: 'Đề xuất giao hàng tự động theo định mức an toàn (BR-36b)',
-            });
-          }
-        }
-      } else {
-        const rawPos = await this.procedureService.executeProcedure(
-          'dbo.usp_DeliveryPlan_GetPoOptions',
-          {
-            FactoryID: dto.factoryId,
-            MaterialID: 17,
-            SupplierID: null,
-          },
-        );
-
-        for (const po of rawPos) {
-          const hasExisting = weekData?.items?.some(
-            (it: any) => it.poNumber === po.PONumber && it.weeklySummary.totalPlanKg > 0,
-          );
-
-          if (!hasExisting && Number(po.DeliverRemainderKg) > 0) {
-            suggestedPlans.push({
-              isSuggested: true,
-              planDate: days[2] || days[0],
-              factoryId: dto.factoryId,
-              materialId: 17,
-              supplierId: Number(po.SupplierID),
-              supplierCode: po.SupplierCode,
-              supplierName: po.SupplierName,
-              poNumber: po.PONumber,
-              planQtyKg: Number(po.DeliverRemainderKg),
-              planQtyTons: Number(po.DeliverRemainderTons),
-              note: 'Đề xuất giao hàng tự động theo định mức an toàn (BR-36b)',
-            });
-          }
+        for (const sug of pairResult.suggestions) {
+          suggestedPlans.push({
+            isSuggested: true,
+            planDate: sug.suggestDate,
+            factoryId: dto.factoryId,
+            materialId: mId,
+            materialCode: item.MaterialCode,
+            materialName: item.MaterialName,
+            supplierId: sug.supplierId || Number(item.SupplierID),
+            supplierCode: sug.supplierCode || item.SupplierCode,
+            supplierName: sug.supplierName || item.SupplierName,
+            poNumber: sug.poNumber,
+            planQtyKg: sug.suggestQtyKg,
+            planQtyTons: sug.suggestQtyTons,
+            isLateWarning: sug.isLateWarning,
+            doiAfterDelivery: sug.doiAfterDelivery,
+            note: sug.reason,
+          });
         }
       }
 
       return {
         weekStartDate: dto.weekStartDate,
+        weekEndDate,
         factoryId: dto.factoryId,
+        factoryCode: factoryMeta.FactoryCode,
+        factoryName: factoryMeta.FactoryName,
         consolidated: false,
         suggestedPlans,
       };
