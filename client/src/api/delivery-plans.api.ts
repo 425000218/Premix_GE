@@ -37,11 +37,17 @@ export const deliveryPlansApi = {
     return res.data?.data || res.data;
   },
 
-  getSuggestions: async (weekStartDate: string, factoryId: number, materialId?: number) => {
+  getSuggestions: async (
+    weekStartDate: string,
+    factoryId: number,
+    materialId?: number,
+    consolidateBySupplier: boolean = false
+  ) => {
     const res = await apiClient.post('/delivery-plans/suggest', {
       weekStartDate,
       factoryId,
       materialId,
+      consolidateBySupplier,
     });
     return res.data?.data || res.data;
   },

@@ -62,6 +62,11 @@ export const DeliveryPlanPage: React.FC = () => {
   const [newSupplierId, setNewSupplierId] = useState<number | ''>('');
   const [newPoNumber, setNewPoNumber] = useState<string>('');
 
+  // JRP Consolidation modal & state
+  const [isConsolidating, setIsConsolidating] = useState(false);
+  const [isConsolidationModalOpen, setIsConsolidationModalOpen] = useState(false);
+  const [consolidatedData, setConsolidatedData] = useState<any | null>(null);
+
   // 7 days dates array
   const weekDates = Array.from({ length: 7 }).map((_, i) => {
     const d = new Date(weekStartDate);
@@ -211,6 +216,72 @@ export const DeliveryPlanPage: React.FC = () => {
     }
   };
 
+  // Gom chuyến xe tải theo Nhà Cung Cấp (JRP Consolidation - BR-36b)
+  const handleConsolidateJrp = async () => {
+    setIsConsolidating(true);
+    setErrorMessage(null);
+    try {
+      const result = await deliveryPlansApi.getSuggestions(weekStartDate, selectedFactoryId, undefined, true);
+      if (result && result.consolidated) {
+        setConsolidatedData(result);
+        setIsConsolidationModalOpen(true);
+      } else {
+        setErrorMessage('Không có đủ dữ liệu nhu cầu để sinh chuyến xe gom.');
+      }
+    } catch (err: any) {
+      console.error('Failed to run JRP consolidation:', err);
+      setErrorMessage(err.response?.data?.message || 'Lỗi khi thực thi thuật toán ghép chuyến FTL.');
+    } finally {
+      setIsConsolidating(false);
+    }
+  };
+
+  // Áp dụng các chuyến xe gom FTL vào bảng lưới tuần hiện tại
+  const handleApplyConsolidationToGrid = () => {
+    if (!consolidatedData?.suggestedPlans || consolidatedData.suggestedPlans.length === 0) {
+      setIsConsolidationModalOpen(false);
+      return;
+    }
+
+    setRows((prev) => {
+      const next = [...prev];
+      for (const sp of consolidatedData.suggestedPlans) {
+        const poKey = sp.poNumber || 'NO_PO';
+        let targetRow = next.find(
+          (r) => r.materialId === sp.materialId && (r.poNumber || 'NO_PO') === poKey
+        );
+
+        if (!targetRow) {
+          const dayMap: Record<string, { planQtyTons: number; receivedQtyTons: number }> = {};
+          weekDates.forEach((d) => {
+            dayMap[d] = { planQtyTons: 0, receivedQtyTons: 0 };
+          });
+          targetRow = {
+            id: `${sp.materialId}_${sp.supplierId}_${poKey}_${Date.now()}_${Math.random()}`,
+            materialId: sp.materialId,
+            materialCode: sp.materialCode,
+            materialName: sp.materialName,
+            supplierId: sp.supplierId,
+            supplierName: sp.supplierName,
+            poNumber: sp.poNumber || undefined,
+            dayPlans: dayMap,
+          };
+          next.push(targetRow);
+        }
+
+        if (targetRow.dayPlans[sp.planDate]) {
+          targetRow.dayPlans[sp.planDate] = {
+            ...targetRow.dayPlans[sp.planDate],
+            planQtyTons: sp.planQtyTons,
+          };
+        }
+      }
+      return next;
+    });
+
+    setIsConsolidationModalOpen(false);
+  };
+
   // Open Add Row Modal
   const handleOpenAddModal = async () => {
     setNewMaterialId('');
@@ -276,6 +347,16 @@ export const DeliveryPlanPage: React.FC = () => {
               leftIcon={<Sparkles className="w-3.5 h-3.5 text-amber-500" />}
             >
               Đề xuất lịch giao (BR-36)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleConsolidateJrp}
+              isLoading={isConsolidating}
+              leftIcon={<Truck className="w-3.5 h-3.5 text-indigo-600" />}
+              className="border-indigo-300 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100/70"
+            >
+              Gom chuyến FTL (JRP)
             </Button>
             <Button
               variant="outline"
@@ -588,6 +669,160 @@ export const DeliveryPlanPage: React.FC = () => {
               ))}
             </select>
           </div>
+        </div>
+      </Modal>
+      {/* Modal Đề Xuất Gom Chuyến Xe Tải FTL Theo Nhà Cung Cấp (JRP BR-36b) */}
+      <Modal
+        isOpen={isConsolidationModalOpen}
+        onClose={() => setIsConsolidationModalOpen(false)}
+        title="Thuật Toán Ghép Chuyến Xe Tải FTL Theo NCC (JRP - BR-36b)"
+        subtitle="Tối ưu hóa chi phí vận chuyển bằng cách gộp các mã nguyên liệu cùng nhà cung cấp theo định mức tải trọng xe và quy cách bao"
+        footer={
+          <div className="flex items-center justify-between w-full">
+            <span className="text-xs text-slate-500 italic">
+              * Tuyệt đối không xếp giao vào Chủ Nhật (Sunday Ban - BR-36)
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsConsolidationModalOpen(false)}>
+                Đóng
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleApplyConsolidationToGrid}
+                leftIcon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                Áp dụng vào lưới tuần
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          {/* Summary KPIs Banner */}
+          {consolidatedData?.summary && (
+            <div className="grid grid-cols-4 gap-3 bg-indigo-50/70 p-3.5 rounded-xl border border-indigo-100">
+              <div className="text-center border-r border-indigo-200/60">
+                <span className="block text-[11px] font-medium text-indigo-700">Tổng Chuyến Xe</span>
+                <span className="text-lg font-bold text-indigo-950">
+                  {consolidatedData.summary.totalTrips} <span className="text-xs font-normal">chuyến</span>
+                </span>
+              </div>
+              <div className="text-center border-r border-indigo-200/60">
+                <span className="block text-[11px] font-medium text-indigo-700">Tổng Khối Lượng</span>
+                <span className="text-lg font-bold text-indigo-950">
+                  {consolidatedData.summary.totalVolumeTons} <span className="text-xs font-normal">tấn</span>
+                </span>
+              </div>
+              <div className="text-center border-r border-indigo-200/60">
+                <span className="block text-[11px] font-medium text-indigo-700">Lấp Đầy Bình Quân</span>
+                <span className="text-lg font-bold text-emerald-700">
+                  {consolidatedData.summary.averageFillRatePct}%
+                </span>
+              </div>
+              <div className="text-center">
+                <span className="block text-[11px] font-medium text-indigo-700">Chuyến Tiết Kiệm</span>
+                <span className="text-lg font-bold text-indigo-600">
+                  +{consolidatedData.summary.tripsSavedCount} <span className="text-xs font-normal">chuyến</span>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Trips List */}
+          {consolidatedData?.trips && consolidatedData.trips.length > 0 ? (
+            <div className="space-y-3">
+              {consolidatedData.trips.map((trip: any) => (
+                <div
+                  key={trip.tripId}
+                  className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs hover:border-indigo-300 transition-colors"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 text-[11px] font-bold rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        {trip.truckloadTier} ({trip.truckCapacityKg / 1000}T)
+                      </span>
+                      <span className="font-semibold text-slate-900 text-xs">{trip.tripId}</span>
+                      <span className="text-slate-400">•</span>
+                      <span className="text-xs text-slate-600 font-medium">{trip.supplierName}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-semibold text-slate-800">
+                        {trip.dayName} ({trip.planDate})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Fill rate progress bar */}
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="text-slate-500">Tải trọng: {trip.totalTripTons} / {trip.truckCapacityKg / 1000} tấn</span>
+                      <span className={`font-bold ${trip.fillRatePct >= 85 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {trip.fillRatePct}% Đầy tải
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          trip.fillRatePct >= 85 ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${Math.min(100, trip.fillRatePct)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Items Table */}
+                  <div className="overflow-x-auto rounded-lg border border-slate-100">
+                    <table className="w-full text-[11px] text-left">
+                      <thead className="bg-slate-50/80 text-slate-600 border-b border-slate-100 font-semibold">
+                        <tr>
+                          <th className="py-1 px-2.5">Mã NL</th>
+                          <th className="py-1 px-2.5">Tên Nguyên Liệu</th>
+                          <th className="py-1 px-2.5 text-right">Khối Lượng</th>
+                          <th className="py-1 px-2.5 text-right">Quy Cách</th>
+                          <th className="py-1 px-2.5">Số PO</th>
+                          <th className="py-1 px-2.5">Phân Loại JRP</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {trip.items.map((it: any, itIdx: number) => (
+                          <tr key={itIdx} className="hover:bg-slate-50/50">
+                            <td className="py-1.5 px-2.5 font-mono text-slate-600">{it.materialCode}</td>
+                            <td className="py-1.5 px-2.5 font-medium text-slate-900">{it.materialName}</td>
+                            <td className="py-1.5 px-2.5 text-right font-bold text-slate-800">
+                              {it.planQtyTons} tấn <span className="font-normal text-slate-400">({it.planQtyKg.toLocaleString()} kg)</span>
+                            </td>
+                            <td className="py-1.5 px-2.5 text-right text-slate-600">
+                              {it.bagCount > 0 ? `${it.bagCount} bao` : 'Hàng xá'}
+                            </td>
+                            <td className="py-1.5 px-2.5 text-slate-600 font-mono">
+                              {it.poNumber || <span className="text-slate-400 italic">Chưa gán</span>}
+                            </td>
+                            <td className="py-1.5 px-2.5">
+                              {it.isMustOrder ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                  Cạn hàng (Must)
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Gom tải (Can-Order)
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-slate-500 text-xs">
+              Không có chuyến xe nào cần gom trong tuần này.
+            </div>
+          )}
         </div>
       </Modal>
     </div>

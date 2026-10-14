@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { ProcedureService } from '../../database/procedure.service.js';
 import {
+  ConsolidationInputItem,
+  runConsolidationEngine,
+} from './domain/consolidation-engine.js';
+import {
   GetPoOptionsQueryDto,
   GetWeekPlanQueryDto,
   PlanItemDto,
@@ -409,11 +413,129 @@ export class DeliveryPlansService {
   }
 
   /**
-   * Đề xuất các chuyến giao nháp lên lưới tuần theo thuật toán BR-36b
+   * Đề xuất các chuyến giao nháp lên lưới tuần theo thuật toán BR-36b (JRP Truckload Consolidation)
    * Không lưu vào CSDL, chỉ trả về danh sách các chuyến nháp để Planner xem & tinh chỉnh
    */
   async suggestWeekPlans(userId: number, dto: SuggestPlanDto) {
     try {
+      if (dto.consolidateBySupplier) {
+        const sets = await this.procedureService.executeMultiSetProcedure(
+          'dbo.usp_DeliveryPlan_GetConsolidationData',
+          {
+            UserID: userId,
+            FactoryID: dto.factoryId,
+            WeekStartDate: dto.weekStartDate,
+            MaterialID: dto.materialId ?? null,
+          },
+        );
+
+        const factoryMeta = sets[0]?.[0] || {};
+        const rawItems = sets[1] || [];
+        const rawPos = sets[2] || [];
+        const rawExistingPlans = sets[3] || [];
+
+        // Nhóm Open POs theo MaterialID
+        const posByMaterial = new Map<number, any[]>();
+        for (const po of rawPos) {
+          const mId = Number(po.MaterialID);
+          if (!posByMaterial.has(mId)) {
+            posByMaterial.set(mId, []);
+          }
+          posByMaterial.get(mId)!.push({
+            poNumber: po.PONumber,
+            remainQtyKg: Number(po.DeliverRemainderKg || 0),
+            etaDate: this.toIsoDate(po.DeliveryDate),
+          });
+        }
+
+        // Nhóm Existing Plans theo MaterialID
+        const existingPlansByMaterial = new Map<number, any[]>();
+        for (const plan of rawExistingPlans) {
+          const mId = Number(plan.MaterialID);
+          if (!existingPlansByMaterial.has(mId)) {
+            existingPlansByMaterial.set(mId, []);
+          }
+          existingPlansByMaterial.get(mId)!.push({
+            planDate: this.toIsoDate(plan.PlanDate),
+            planQtyKg: Number(plan.PlanQtyKg || 0),
+          });
+        }
+
+        // Tạo consolidation inputs cho pure domain engine
+        const consolidationInputItems: ConsolidationInputItem[] = rawItems.map((r: any) => {
+          const mId = Number(r.MaterialID);
+          const isBulk =
+            String(r.Category || '').toUpperCase() === 'BULK' ||
+            String(r.ItemGroup || '').toUpperCase() === 'BULK';
+          return {
+            materialId: mId,
+            materialCode: r.MaterialCode,
+            materialName: r.MaterialName,
+            supplierId: Number(r.SupplierID),
+            supplierCode: r.SupplierCode,
+            supplierName: r.SupplierName,
+            bagKg: r.BagKg != null ? Number(r.BagKg) : 25,
+            isBulk,
+            stdDailyKg: Number(r.DailyDemandKg || 500),
+            currentStockKg: Number(r.CurrentSohKg || 0),
+            safetyDays: Number(r.SafetyDays || 3),
+            warningDays: Number(r.WarningDays || 5),
+            openPos: posByMaterial.get(mId) || [],
+            existingPlans: existingPlansByMaterial.get(mId) || [],
+          };
+        });
+
+        const consolidationResult = runConsolidationEngine(
+          dto.weekStartDate,
+          dto.factoryId,
+          consolidationInputItems,
+        );
+
+        // Chuyển các chuyến xe gom thành suggestedPlans phẳng để tương thích lưới tuần
+        const suggestedPlans: any[] = [];
+        for (const trip of consolidationResult.trips) {
+          for (const item of trip.items) {
+            suggestedPlans.push({
+              isSuggested: true,
+              tripId: trip.tripId,
+              truckloadTier: trip.truckloadTier,
+              fillRatePct: trip.fillRatePct,
+              planDate: trip.planDate,
+              factoryId: dto.factoryId,
+              materialId: item.materialId,
+              materialCode: item.materialCode,
+              materialName: item.materialName,
+              supplierId: trip.supplierId,
+              supplierCode: trip.supplierCode,
+              supplierName: trip.supplierName,
+              poNumber: item.poNumber,
+              planQtyKg: item.planQtyKg,
+              planQtyTons: item.planQtyTons,
+              bagCount: item.bagCount,
+              isMustOrder: item.isMustOrder,
+              note: `[Xe ${trip.truckloadTier} đầy ${trip.fillRatePct}%] ${item.reason}`,
+            });
+          }
+        }
+
+        return {
+          weekStartDate: dto.weekStartDate,
+          factoryId: dto.factoryId,
+          factoryCode: factoryMeta.FactoryCode,
+          factoryName: factoryMeta.FactoryName,
+          consolidated: true,
+          summary: {
+            totalTrips: consolidationResult.totalTrips,
+            totalVolumeKg: consolidationResult.totalVolumeKg,
+            totalVolumeTons: consolidationResult.totalVolumeTons,
+            averageFillRatePct: consolidationResult.averageFillRatePct,
+            tripsSavedCount: consolidationResult.tripsSavedCount,
+          },
+          trips: consolidationResult.trips,
+          suggestedPlans,
+        };
+      }
+
       // 1. Lấy dữ liệu tuần hiện tại (kế hoạch đã lưu, open POs)
       const weekData = await this.getWeekPlan(userId, {
         weekStartDate: dto.weekStartDate,
@@ -425,17 +547,14 @@ export class DeliveryPlansService {
       const suggestedPlans: any[] = [];
 
       // 2. Với các cặp chưa có kế hoạch hoặc còn PO mở, đề xuất chuyến giao nháp
-      // Lấy danh sách PO còn mở cho nhà máy
       if (dto.materialId) {
         const poOptions = await this.getPoOptions({
           factoryId: dto.factoryId,
           materialId: dto.materialId,
         });
 
-        // Nếu có PO còn mở, tạo dòng đề xuất nháp vào ngày giữa tuần (Thứ 4 hoặc ngày hợp lệ)
         if (poOptions.length > 0) {
           const po = poOptions[0];
-          // Kiểm tra xem đã có kế hoạch cho PO này chưa
           const hasExisting = weekData?.items?.some(
             (it: any) => it.poNumber === po.poNumber && it.weeklySummary.totalPlanKg > 0,
           );
@@ -458,12 +577,11 @@ export class DeliveryPlansService {
           }
         }
       } else {
-        // Nếu không chỉ định materialId, quét các PO mở của nhà máy
         const rawPos = await this.procedureService.executeProcedure(
           'dbo.usp_DeliveryPlan_GetPoOptions',
           {
             FactoryID: dto.factoryId,
-            MaterialID: 17, // Scan cặp mẫu hoặc các cặp trong nhà máy
+            MaterialID: 17,
             SupplierID: null,
           },
         );
@@ -494,6 +612,7 @@ export class DeliveryPlansService {
       return {
         weekStartDate: dto.weekStartDate,
         factoryId: dto.factoryId,
+        consolidated: false,
         suggestedPlans,
       };
     } catch (err) {

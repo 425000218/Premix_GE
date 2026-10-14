@@ -45,8 +45,11 @@ flowchart LR
 | **TASK-12** | **F04b** | **Nhu cầu tháng sửa tay (Demand Override) & Các cờ dữ liệu mở rộng** | **Must/Should**| **`DONE`** | 13/10/2026 | 13/10/2026 |
 | **TASK-13** | **F04c** | **Dự phóng tồn 28 ngày (2 tầng) & Thuật toán đề xuất lịch giao (BR-36)** | **Must/Should**| **`DONE`** | 13/10/2026 | 13/10/2026 |
 | **TASK-14** | **F01c** | **Phân quyền động (Quản lý vai trò & Ma trận 27 mã quyền)** | **Must** | **`DONE`** | 14/10/2026 | 14/10/2026 |
+| **TASK-15** | **F07b** | **Thuật toán Ghép Chuyến Xe Tải JRP & Truckload Consolidation (BR-36b)** | **Must** | **`DONE`** | 14/10/2026 | 14/10/2026 |
+| **TASK-16** | **F07c** | **Thuật toán San Phẳng Tải Tiếp Nhận Hố Dỡ (Heijunka - BR-36c)** | **Must/Should**| `PENDING` | — | — |
+| **TASK-17** | **F08b** | **Động Cơ Đề Xuất Mua Hàng Tự Động Khép Kín (Auto PR Engine - BR-25b)** | **Must** | `PENDING` | — | — |
 
-**Tiến độ tổng thể:** **16 / 16 Task (100% - HOÀN THÀNH TOÀN DIỆN DỰ ÁN)**
+**Tiến độ tổng thể:** **17 / 19 Task (Phase 1 Baseline Hoàn tất 100% | Phase 2 Hoàn thành TASK-15, đạt 89.5%)**
 
 ---
 
@@ -622,5 +625,44 @@ flowchart LR
 - **Bằng chứng kiểm thử & Giao diện:**
   - 📸 Giao diện Ma trận phân quyền 2 chiều: `docs/task-14-roles-matrix.png`
   - 📸 Modal tạo vai trò tùy biến mới: `docs/task-14-roles-modal.png`
+- **Trạng thái:** **`DONE`** (Hoàn thành và nghiệm thu 100% ngày 14/10/2026).
+
+---
+
+### [DONE] TASK-15: F07b - Thuật Toán Ghép Chuyến Xe Tải Theo Nhà Cung Cấp (JRP & Truckload Consolidation - BR-36b)
+- **Mã phân hệ:** F07b  
+- **Mức độ ưu tiên:** Must Have (M)  
+- **Tài liệu đặc tả chi tiết:** [docs/modules/F07-KE-HOACH-GIAO-HANG.md](file:///c:/Premix_GE/docs/modules/F07-KE-HOACH-GIAO-HANG.md)  
+- **Nội dung đã hoàn thành:**
+  - [x] **Pure TypeScript Domain Engine (`server/src/modules/delivery-plans/domain/consolidation-engine.ts`):**
+    - Kiến trúc Clean Architecture tách biệt 100% database & framework.
+    - Cài đặt thuật toán **Joint Replenishment Problem (JRP) Heuristic** kết hợp **Can-Order Policy**:
+      - Phân nhóm theo cặp Nhà Cung Cấp - Nhà Máy.
+      - Nhận diện các mã cạn kiệt trước (*Must-Order*) để kích hoạt chuyến xe; tự động gom các mã cùng NCC đang ở ngưỡng an toàn/cảnh báo (*Can-Order*) để lấp đầy xe FTL.
+      - Tự động chọn cỡ xe tối ưu: $5\text{T}, 10\text{T}, 15\text{T}$ cho hàng bao, $30\text{T}$ (xe bồn Bulk) cho hàng xá.
+      - Làm tròn chuẩn quy cách bao ($25\text{ kg}, 50\text{ kg}$) hoặc bội số $1000\text{ kg}$ cho hàng xá.
+      - Tuân thủ nghiêm ngặt quy tắc cấm giao Chủ Nhật (Sunday Ban - BR-36).
+      - Tính toán Fill Rate % và số chuyến xe lẻ cắt giảm được (`tripsSavedCount`).
+  - [x] **Stored Procedure CSDL SQL Server:**
+    - Tạo `dbo.usp_DeliveryPlan_GetConsolidationData` (`database/stored_procedures/15_consolidation_procedures.sql`):
+      - Trả về 4 tập kết quả (Multi-dataset): Metadata NM & Tuần, Danh sách cặp kèm NCC/SOH/tiêu hao $d$/ngưỡng, Danh sách PO Pending còn mở (FIFO), Kế hoạch tuần hiện hữu.
+  - [x] **Backend Service & API Endpoint (`server/src/modules/delivery-plans/`):**
+    - Mở rộng DTO `SuggestPlanDto`: thêm các tham số `consolidateBySupplier`, `minFillRate`, `autoRoundBag`, `avoidSunday`.
+    - Nâng cấp `POST /api/v1/delivery-plans/suggest`: Hỗ trợ cờ `consolidateBySupplier: true`, kết nối Stored Procedure và Pure Domain Engine, trả về cấu trúc chuyến xe FTL (`trips`), tổng hợp (`summary`), và `suggestedPlans`.
+  - [x] **Frontend UI/UX (`client/src/pages/DeliveryPlanPage.tsx`):**
+    - Bổ sung nút bấm trực quan *"Gom chuyến FTL (JRP)"* trên thanh công cụ PageHeader.
+    - Modal trực quan hóa đề xuất gom xe FTL: Banner thống kê KPI (Tổng chuyến, Tổng tấn, Lấp đầy bình quân %, Chuyến tiết kiệm), Thẻ từng chuyến xe gom với thanh tải trọng tiến độ (Fill Rate %), bảng chi tiết từng mã phân loại *Must-Order* vs *Can-Order*, quy cách bao, số PO.
+    - Nút *"Áp dụng vào lưới tuần"* tự động đổ các chuyến gom FTL vào bảng lưới tuần để Planner lưu hoặc hiệu chỉnh.
+- **Kết quả kiểm thử tự động (Test Runner `server/test/test-task-15.js`):**
+  - ✅ **PASS [AC-15.01]:** Động cơ JRP gom thành công các mã nguyên liệu của cùng NCC (VEND001) vào 1 chuyến xe FTL.
+  - ✅ **PASS [AC-15.02]:** Chọn cỡ xe tải FTL chuẩn ($5\text{T}, 10\text{T}, 15\text{T}, 30\text{T}$ Bulk) và đạt tỷ lệ đầy tải cao (đạt 94% - 100%).
+  - ✅ **PASS [AC-15.03]:** Làm tròn chính xác theo quy cách bao $25\text{ kg}, 50\text{ kg}$ và bội số $1000\text{ kg}$ hàng xá.
+  - ✅ **PASS [AC-15.04]:** Tuân thủ tuyệt đối quy tắc cấm giao Chủ Nhật (Sunday Ban - BR-36).
+  - ✅ **PASS [AC-15.05]:** Khấu trừ và gán số PO Pending theo nguyên tắc FIFO (PO cũ nhất ưu tiên nhận trước).
+  - ✅ **PASS [AC-15.06]:** Tích hợp trọn vẹn endpoint `POST /api/v1/delivery-plans/suggest` trả về `consolidated: true`, `summary`, `trips`, `suggestedPlans`.
+  - 🎯 **Tổng kết:** **18 / 18 Test Cases PASSED (100%)**.
+- **Bằng chứng giao diện & Kiểm thử:**
+  - 📸 Modal chi tiết gom chuyến xe tải FTL theo NCC (JRP BR-36b): `docs/task-15-consolidation-grid.png`
+  - 📸 Bảng lưới tuần sau khi áp dụng các chuyến xe gom: `docs/task-15-applied-grid.png`
 - **Trạng thái:** **`DONE`** (Hoàn thành và nghiệm thu 100% ngày 14/10/2026).
 

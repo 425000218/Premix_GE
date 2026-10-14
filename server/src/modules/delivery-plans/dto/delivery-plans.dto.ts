@@ -197,4 +197,37 @@ export class SuggestPlanDto {
   @IsInt()
   @Min(1)
   materialId?: number;
+
+  @ApiPropertyOptional({
+    description: 'Kích hoạt thuật toán ghép chuyến FTL theo NCC (JRP Can-order Policy)',
+    example: true,
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  consolidateBySupplier?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Ngưỡng tỷ lệ lấp đầy tối thiểu % (mặc định 85%)',
+    example: 85,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(50)
+  minFillRate?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tự động làm tròn khối lượng theo quy cách bao chuẩn',
+    example: true,
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  autoRoundBag?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Tuân thủ cấm giao Chủ Nhật (Sunday Ban - BR-36)',
+    example: true,
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  avoidSunday?: boolean;
 }
