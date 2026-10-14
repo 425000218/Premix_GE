@@ -34,12 +34,7 @@ export class PermissionsGuard implements CanActivate {
       throw new UnauthorizedException('Người dùng chưa được xác thực');
     }
 
-    // Quy tắc D1 & A4: ADMIN luôn có đủ 27 quyền hệ thống
-    if (user.roleCode === ROLES.ADMIN) {
-      return true;
-    }
-
-    // Đọc quyền trực tiếp từ CSDL ở mỗi request (A6: Cập nhật quyền tức thì)
+    // Đọc quyền và trạng thái tài khoản trực tiếp từ CSDL ở mỗi request (A6: Cập nhật quyền tức thì & chống bẫy token cũ)
     const resultSets = await this.procedureService.executeMultiSetProcedure(
       'usp_Auth_GetCurrentUser',
       { UserID: user.userId },
@@ -48,6 +43,15 @@ export class PermissionsGuard implements CanActivate {
     const userRow = resultSets[0] && resultSets[0][0] ? resultSets[0][0] : null;
     if (!userRow || !userRow.IsActive) {
       throw new UnauthorizedException('Tài khoản đã bị vô hiệu hóa hoặc không tồn tại');
+    }
+
+    // Cập nhật lại roleCode và factoryScope thực tế từ DB vào request.user
+    user.roleCode = userRow.RoleCode;
+    user.factoryScope = userRow.FactoryScope;
+
+    // Quy tắc D1 & A4: ADMIN thực tế trong CSDL luôn có đủ 27 quyền hệ thống
+    if (userRow.RoleCode === ROLES.ADMIN) {
+      return true;
     }
 
     const permRows = resultSets[1] || [];

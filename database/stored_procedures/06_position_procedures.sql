@@ -366,7 +366,7 @@ BEGIN
             MaterialID,
             SUM(DeliverRemainderKg) AS PoPendingKg,
             COUNT(1) AS PoPendingCount,
-            SUM(CASE WHEN DATEDIFF(DAY, DeliveryDate, @PoRefDate) >= (@PoLateMonths * 30) THEN 1 ELSE 0 END) AS LatePoCount,
+            SUM(CASE WHEN DeliveryDate <= DATEADD(MONTH, -@PoLateMonths, @PoRefDate) THEN 1 ELSE 0 END) AS LatePoCount,
             CONVERT(VARCHAR(10), MIN(DeliveryDate), 23) AS EarliestPoDate
         FROM dbo.fact_PO_Pending
         WHERE SnapshotDate = @SnapDate
@@ -508,7 +508,7 @@ BEGIN
             p.DeliverRemainderKg AS deliverRemainderKg,
             p.LineStatus AS lineStatus,
             DATEDIFF(DAY, p.DeliveryDate, @PoRefDate) AS ageDays,
-            CASE WHEN DATEDIFF(DAY, p.DeliveryDate, @PoRefDate) >= (@PoLateMonths * 30) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isLate
+            CASE WHEN p.DeliveryDate <= DATEADD(MONTH, -@PoLateMonths, @PoRefDate) THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS isLate
         FROM dbo.fact_PO_Pending p
         LEFT JOIN dbo.dim_Supplier s ON p.VendorAccount = s.SupplierCode
         WHERE p.SnapshotDate = @SnapDate

@@ -116,8 +116,9 @@ BEGIN
 
         BEGIN TRANSACTION;
 
-        -- 2. Sinh mã PR với khóa độc quyền chống trùng lặp đồng thời
-        DECLARE @TodayStr VARCHAR(8) = CONVERT(VARCHAR(8), SYSUTCDATETIME(), 112); -- 'YYYYMMDD'
+        -- 2. Sinh mã PR với khóa độc quyền chống trùng lặp đồng thời (theo giờ Việt Nam UTC+7 - T7)
+        DECLARE @NowVn DATETIME2 = DATEADD(HOUR, 7, SYSUTCDATETIME());
+        DECLARE @TodayStr VARCHAR(8) = CONVERT(VARCHAR(8), @NowVn, 112); -- 'YYYYMMDD'
         DECLARE @Prefix VARCHAR(12) = 'PR-' + @TodayStr + '-';
 
         DECLARE @MaxSeq INT = 0;

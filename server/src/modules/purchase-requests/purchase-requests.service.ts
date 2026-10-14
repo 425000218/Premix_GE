@@ -175,14 +175,11 @@ export class PurchaseRequestsService {
 
         const finalQtyTons = +(finalQtyKg / 1000).toFixed(3);
 
-        const supplierInfo = supplierMap.get(pairKey) || {
-          supplierId: 14,
-          supplierCode: 'VEND001',
-          supplierName: 'Công ty Cung ứng Premix',
-          leadTimeDays: 7,
-        };
-
-        const leadTimeDays = supplierInfo.leadTimeDays || 7;
+        const supplierInfo = supplierMap.get(pairKey);
+        const supplierId = supplierInfo?.supplierId ?? null;
+        const supplierCode = supplierInfo?.supplierCode ?? null;
+        const supplierName = supplierInfo?.supplierName ?? 'Chưa xác định NCC';
+        const leadTimeDays = supplierInfo?.leadTimeDays ?? 7;
 
         // Ngày cần hàng về: ưu tiên ngày hết hàng dự kiến, tối thiểu là hôm nay
         let needByDate = pos.stockoutDate || snapshotDate || todayVn;
@@ -190,10 +187,10 @@ export class PurchaseRequestsService {
           needByDate = todayVn;
         }
 
-        // Ngày đặt hàng muộn nhất = needByDate - leadTimeDays
-        const needByTime = new Date(needByDate + 'T00:00:00Z').getTime();
-        const orderTime = needByTime - leadTimeDays * 86400000;
-        const suggestedOrderDate = new Date(orderTime).toISOString().slice(0, 10);
+        // Ngày đặt hàng muộn nhất = needByDate - leadTimeDays (theo chuẩn ngày ISO)
+        const dObj = new Date(needByDate + 'T00:00:00Z');
+        dObj.setUTCDate(dObj.getUTCDate() - leadTimeDays);
+        const suggestedOrderDate = dObj.toISOString().slice(0, 10);
 
         suggestions.push({
           factoryId: pos.factoryId,
