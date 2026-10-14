@@ -696,6 +696,8 @@ BEGIN
         GROUP BY por.ReceiptNumber, m.MaterialID, f.FactoryID, s.SupplierID;
 
         -- 4.5. Ghi fact_Internal_Transfer (BR-19a: Upsert theo TransferNumber + MaterialID, CHỐNG LÙI TRẠNG THÁI)
+        -- Quy tắc Phụ lục B: Chỉ ghi đè khi SnapshotDate lần nạp >= SnapshotDate đã ghi; file cũ hơn chỉ thêm dòng chưa có.
+        -- Trạng thái chuẩn: CREATED (1) < SHIPPED (2) < RECEIVED (3), không có CANCELLED.
         MERGE dbo.fact_Internal_Transfer AS target
         USING (
             SELECT
@@ -717,16 +719,17 @@ BEGIN
             GROUP BY tr.TransferNumber, m.MaterialID
         ) AS source
         ON target.TransferNumber = source.TransferNumber AND target.MaterialID = source.MaterialID
-        WHEN MATCHED THEN
+        WHEN MATCHED AND (@SnapshotDate >= ISNULL(target.SnapshotDate, '1900-01-01')) THEN
             UPDATE SET
+                target.SnapshotDate = @SnapshotDate,
                 target.FromWarehouse = source.FromWarehouse,
                 target.ToWarehouse = source.ToWarehouse,
                 target.FromFactoryID = source.FromFactoryID,
                 target.ToFactoryID = source.ToFactoryID,
-                -- BR-19a: Trạng thái TO không được phép lùi (CREATED < SHIPPED < RECEIVED < CANCELLED)
+                -- BR-19a: Trạng thái TO không được phép lùi (CREATED < SHIPPED < RECEIVED)
                 target.TransferStatus = CASE 
-                    WHEN (CASE UPPER(source.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 WHEN 'CANCELLED' THEN 4 ELSE 0 END) 
-                         >= (CASE UPPER(target.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 WHEN 'CANCELLED' THEN 4 ELSE 0 END)
+                    WHEN (CASE UPPER(source.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 ELSE 0 END) 
+                         >= (CASE UPPER(target.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 ELSE 0 END)
                     THEN source.TransferStatus
                     ELSE target.TransferStatus
                 END,
@@ -752,12 +755,12 @@ BEGIN
             INSERT (
                 TransferNumber, MaterialID, FromWarehouse, ToWarehouse,
                 FromFactoryID, ToFactoryID, TransferStatus, ShippedDate,
-                ReceivedDate, ShippedQtyKg, PostedQtyKg, BatchID, CreatedAt, UpdatedAt
+                ReceivedDate, ShippedQtyKg, PostedQtyKg, SnapshotDate, BatchID, CreatedAt, UpdatedAt
             )
             VALUES (
                 source.TransferNumber, source.MaterialID, source.FromWarehouse, source.ToWarehouse,
                 source.FromFactoryID, source.ToFactoryID, source.TransferStatus, source.ShippedDate,
-                source.ReceivedDate, source.ShippedQtyKg, source.PostedQtyKg, @BatchID, SYSUTCDATETIME(), SYSUTCDATETIME()
+                source.ReceivedDate, source.ShippedQtyKg, source.PostedQtyKg, @SnapshotDate, @BatchID, SYSUTCDATETIME(), SYSUTCDATETIME()
             );
 
         -- 4.6. Ghi cảnh báo chất lượng dữ liệu vào sys_Data_Quality_Issue

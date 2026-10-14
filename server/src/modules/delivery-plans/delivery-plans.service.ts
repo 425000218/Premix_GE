@@ -361,6 +361,7 @@ export class DeliveryPlansService {
           FactoryID: dto.factoryId,
           PlansJson: plansJson,
           MaterialID: dto.materialId ?? null,
+          MaterialIdsJson: dto.materialIds && dto.materialIds.length > 0 ? JSON.stringify(dto.materialIds) : null,
           IPAddress: ipAddress ?? null,
         },
       );

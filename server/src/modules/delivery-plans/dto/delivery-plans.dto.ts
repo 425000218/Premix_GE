@@ -137,6 +137,15 @@ export class SaveWeekPlanDto {
   @Min(1)
   materialId?: number;
 
+  @ApiPropertyOptional({
+    description: 'Danh sách các MaterialID đang hiển thị trên lưới để xóa chính xác khi các ngày bị xóa về 0',
+    type: [Number],
+    example: [17, 21, 22],
+  })
+  @IsOptional()
+  @IsArray()
+  materialIds?: number[];
+
   @ApiProperty({
     description: 'Danh sách các dòng kế hoạch giao hàng trong tuần (nhập theo tấn)',
     type: [PlanItemDto],

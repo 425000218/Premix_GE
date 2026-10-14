@@ -626,11 +626,14 @@ BEGIN
             END
         END
 
-        -- 5. Kiểm tra xem tài khoản có phát sinh dữ liệu giao dịch hay không
+        -- 5. Kiểm tra xem tài khoản có phát sinh dữ liệu giao dịch hay không (D3, T9)
         IF EXISTS (SELECT 1 FROM dbo.fact_Inventory_Block WHERE CreatedBy = @TargetUsername)
            OR EXISTS (SELECT 1 FROM dbo.fact_Purchase_Request WHERE CreatedBy = @TargetUsername)
            OR EXISTS (SELECT 1 FROM dbo.fact_Demand_Override WHERE CreatedBy = @TargetUsername)
            OR EXISTS (SELECT 1 FROM dbo.sys_Import_Batch WHERE ImportedBy = @TargetUsername)
+           OR EXISTS (SELECT 1 FROM dbo.fact_Delivery_Plan WHERE CreatedBy = @TargetUsername OR UpdatedBy = @TargetUsername)
+           OR EXISTS (SELECT 1 FROM dbo.cfg_Stock_Threshold WHERE UpdatedBy = @TargetUsername)
+           OR EXISTS (SELECT 1 FROM dbo.cfg_System WHERE UpdatedBy = @TargetUsername)
         BEGIN
             THROW 50409, N'[50409] Tài khoản đã phát sinh dữ liệu giao dịch, không thể xóa. Hãy thực hiện vô hiệu hóa (IsActive = 0).', 1;
         END

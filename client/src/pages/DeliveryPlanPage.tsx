@@ -186,6 +186,7 @@ export const DeliveryPlanPage: React.FC = () => {
       await deliveryPlansApi.saveWeekPlan({
         weekStartDate,
         factoryId: selectedFactoryId,
+        materialIds: Array.from(new Set(rows.map((r) => r.materialId))),
         plans: plansPayload,
       });
 

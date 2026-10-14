@@ -188,6 +188,7 @@ CREATE OR ALTER PROCEDURE dbo.usp_DeliveryPlan_SaveWeek
     @FactoryID INT,
     @PlansJson NVARCHAR(MAX),
     @MaterialID INT = NULL,
+    @MaterialIdsJson NVARCHAR(MAX) = NULL,
     @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
@@ -301,16 +302,26 @@ BEGIN
           AND PlanDate BETWEEN @WeekStart AND @WeekEnd
           AND (
               (@MaterialID IS NOT NULL AND MaterialID = @MaterialID)
-              OR (@MaterialID IS NULL AND MaterialID IN (SELECT DISTINCT MaterialID FROM #ParsedPlans))
+              OR (@MaterialIdsJson IS NOT NULL AND MaterialID IN (SELECT TRY_CONVERT(INT, value) FROM OPENJSON(@MaterialIdsJson)))
+              OR (@MaterialID IS NULL AND @MaterialIdsJson IS NULL AND MaterialID IN (SELECT DISTINCT MaterialID FROM #ParsedPlans))
           );
 
         -- 4. Xóa kế hoạch cũ có chọn lọc (tránh xóa nhầm các nguyên liệu khác trong tuần)
+        -- Sửa triệt để N2: Nếu có @MaterialIdsJson (danh sách nguyên liệu hiển thị trên lưới),
+        -- xóa sạch các dòng cũ của các nguyên liệu đó kể cả khi trên lưới người dùng xóa hết các ngày (plans = 0)
         IF @MaterialID IS NOT NULL
         BEGIN
             DELETE FROM dbo.fact_Delivery_Plan
             WHERE FactoryID = @FactoryID 
               AND PlanDate BETWEEN @WeekStart AND @WeekEnd
               AND MaterialID = @MaterialID;
+        END
+        ELSE IF @MaterialIdsJson IS NOT NULL AND ISJSON(@MaterialIdsJson) = 1
+        BEGIN
+            DELETE FROM dbo.fact_Delivery_Plan
+            WHERE FactoryID = @FactoryID 
+              AND PlanDate BETWEEN @WeekStart AND @WeekEnd
+              AND MaterialID IN (SELECT TRY_CONVERT(INT, value) FROM OPENJSON(@MaterialIdsJson));
         END
         ELSE
         BEGIN

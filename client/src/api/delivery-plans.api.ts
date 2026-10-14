@@ -14,6 +14,8 @@ export interface PlanItemPayload {
 export interface SaveWeekPlanPayload {
   weekStartDate: string;
   factoryId: number;
+  materialId?: number;
+  materialIds?: number[];
   plans: PlanItemPayload[];
 }
 
