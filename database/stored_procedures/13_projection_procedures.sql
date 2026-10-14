@@ -27,20 +27,25 @@ BEGIN
         IF @SnapDate IS NULL
             SET @SnapDate = ISNULL(@LatestSnapshotDate, CAST(DATEADD(HOUR, 7, SYSUTCDATETIME()) AS DATE));
 
-        -- 2. Kiểm tra phân quyền phạm vi nhà máy (Role FACTORY với scope ASSIGNED)
+        -- 2. Kiểm tra phân quyền phạm vi nhà máy (Role FACTORY với scope ASSIGNED) - Default Deny
+        DECLARE @FactoryScope VARCHAR(10) = NULL;
         IF @UserID IS NOT NULL
         BEGIN
-            DECLARE @FactoryScope VARCHAR(10) = 'ALL';
             SELECT @FactoryScope = r.FactoryScope
             FROM dbo.sys_User u
             INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-            WHERE u.UserID = @UserID;
+            WHERE u.UserID = @UserID AND u.IsActive = 1;
+        END;
 
-            IF @FactoryScope = 'ASSIGNED'
-               AND NOT EXISTS (SELECT 1 FROM dbo.sys_User_Factory WHERE UserID = @UserID AND FactoryID = @FactoryID)
-            BEGIN
-                THROW 50403, N'[50403] Bạn không có quyền truy cập dữ liệu dự phóng của nhà máy này.', 1;
-            END;
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END;
+
+        IF @FactoryScope = 'ASSIGNED'
+           AND NOT EXISTS (SELECT 1 FROM dbo.sys_User_Factory WHERE UserID = @UserID AND FactoryID = @FactoryID)
+        BEGIN
+            THROW 50403, N'[50403] Bạn không có quyền truy cập dữ liệu dự phóng của nhà máy này.', 1;
         END;
 
         -- 3. Kiểm tra Nhà máy & Nguyên liệu tồn tại

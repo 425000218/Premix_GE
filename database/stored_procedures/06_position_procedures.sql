@@ -79,14 +79,19 @@ BEGIN
         IF @SnapDate IS NULL
             SET @SnapDate = ISNULL(@LatestSnapshotDate, CAST(DATEADD(HOUR, 7, SYSUTCDATETIME()) AS DATE));
 
-        -- Kiểm tra phạm vi nhà máy của User (ALL vs ASSIGNED)
-        DECLARE @FactoryScope VARCHAR(10) = 'ALL';
+        -- Kiểm tra phạm vi nhà máy của User (Default Deny)
+        DECLARE @FactoryScope VARCHAR(10) = NULL;
         IF @UserID IS NOT NULL
         BEGIN
             SELECT @FactoryScope = r.FactoryScope
             FROM dbo.sys_User u
             INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-            WHERE u.UserID = @UserID;
+            WHERE u.UserID = @UserID AND u.IsActive = 1;
+        END;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
         END;
 
         -- Nếu User có phạm vi ASSIGNED và truyền @FactoryID cụ thể không nằm trong danh sách được gán -> Chặn 403
@@ -424,20 +429,25 @@ BEGIN
         IF @SnapDate IS NULL
             SET @SnapDate = ISNULL(@LatestSnapshotDate, CAST(DATEADD(HOUR, 7, SYSUTCDATETIME()) AS DATE));
 
-        -- Kiểm tra quyền phạm vi nhà máy
+        -- Kiểm tra quyền phạm vi nhà máy (Default Deny)
+        DECLARE @FactoryScope VARCHAR(10) = NULL;
         IF @UserID IS NOT NULL
         BEGIN
-            DECLARE @FactoryScope VARCHAR(10) = 'ALL';
             SELECT @FactoryScope = r.FactoryScope
             FROM dbo.sys_User u
             INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-            WHERE u.UserID = @UserID;
+            WHERE u.UserID = @UserID AND u.IsActive = 1;
+        END;
 
-            IF @FactoryScope = 'ASSIGNED'
-               AND NOT EXISTS (SELECT 1 FROM dbo.sys_User_Factory WHERE UserID = @UserID AND FactoryID = @FactoryID)
-            BEGIN
-                THROW 50403, N'[50403] Bạn không có quyền xem vị thế của nhà máy này.', 1;
-            END;
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END;
+
+        IF @FactoryScope = 'ASSIGNED'
+           AND NOT EXISTS (SELECT 1 FROM dbo.sys_User_Factory WHERE UserID = @UserID AND FactoryID = @FactoryID)
+        BEGIN
+            THROW 50403, N'[50403] Bạn không có quyền xem vị thế của nhà máy này.', 1;
         END;
 
         IF NOT EXISTS (SELECT 1 FROM dbo.dim_Factory WHERE FactoryID = @FactoryID)

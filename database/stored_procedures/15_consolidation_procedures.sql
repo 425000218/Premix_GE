@@ -30,12 +30,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        -- 1. Kiểm tra quyền hạn phạm vi Nhà máy của User
-        DECLARE @FactoryScope VARCHAR(20);
+        -- 1. Kiểm tra quyền hạn phạm vi Nhà máy của User (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED'
         BEGIN

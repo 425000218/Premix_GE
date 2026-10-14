@@ -147,31 +147,15 @@ export class RolesService {
 
     try {
       await this.procedureService.executeProcedure('usp_Role_Create', {
+        CurrentUserID: currentUserId,
+        CurrentUsername: currentUsername,
         RoleCode: upperRoleCode,
         RoleName: dto.roleName,
         Description: dto.description || null,
         FactoryScope: dto.factoryScope,
         PermissionsJson: permissionsJson,
-        CreatedBy: currentUsername,
+        IPAddress: ip,
       });
-
-      await this.logAudit(
-        currentUserId,
-        currentUsername,
-        'ROLE_CREATE',
-        'Role',
-        upperRoleCode,
-        ip,
-        'SUCCESS',
-        null,
-        null,
-        JSON.stringify({
-          roleCode: upperRoleCode,
-          roleName: dto.roleName,
-          factoryScope: dto.factoryScope,
-          permissionsCount: dto.permissionCodes?.length || 0,
-        }),
-      );
 
       return await this.getRoleByCode(upperRoleCode);
     } catch (err: any) {
@@ -206,29 +190,14 @@ export class RolesService {
 
     try {
       await this.procedureService.executeProcedure('usp_Role_Update', {
+        CurrentUserID: currentUserId,
+        CurrentUsername: currentUsername,
         RoleCode: upperRoleCode,
         RoleName: dto.roleName,
         Description: dto.description || null,
         FactoryScope: dto.factoryScope,
-        UpdatedBy: currentUsername,
+        IPAddress: ip,
       });
-
-      await this.logAudit(
-        currentUserId,
-        currentUsername,
-        'ROLE_UPDATE',
-        'Role',
-        upperRoleCode,
-        ip,
-        'SUCCESS',
-        null,
-        null,
-        JSON.stringify({
-          roleName: dto.roleName,
-          factoryScope: dto.factoryScope,
-          description: dto.description,
-        }),
-      );
 
       return await this.getRoleByCode(upperRoleCode);
     } catch (err: any) {
@@ -268,22 +237,11 @@ export class RolesService {
 
     try {
       await this.procedureService.executeProcedure('usp_Role_Delete', {
+        CurrentUserID: currentUserId,
+        CurrentUsername: currentUsername,
         RoleCode: upperRoleCode,
-        DeletedBy: currentUsername,
+        IPAddress: ip,
       });
-
-      await this.logAudit(
-        currentUserId,
-        currentUsername,
-        'ROLE_DELETE',
-        'Role',
-        upperRoleCode,
-        ip,
-        'SUCCESS',
-        null,
-        JSON.stringify({ roleCode: upperRoleCode }),
-        null,
-      );
 
       return {
         message: `Đã xóa vai trò '${upperRoleCode}' thành công`,
@@ -337,9 +295,11 @@ export class RolesService {
       const rows = await this.procedureService.executeProcedure<{ PermissionCode: string }>(
         'usp_Role_SetPermissions',
         {
+          CurrentUserID: currentUserId,
+          CurrentUsername: currentUsername,
           RoleCode: upperRoleCode,
           PermissionsJson: permissionsJson,
-          UpdatedBy: currentUsername,
+          IPAddress: ip,
         },
       );
 

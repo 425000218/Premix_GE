@@ -127,6 +127,16 @@ export class SaveWeekPlanDto {
   @Min(1)
   factoryId!: number;
 
+  @ApiPropertyOptional({
+    description: 'ID nguyên liệu cần lưu riêng (nếu để trống sẽ lưu theo danh sách các nguyên liệu có trong plans)',
+    example: 17,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  materialId?: number;
+
   @ApiProperty({
     description: 'Danh sách các dòng kế hoạch giao hàng trong tuần (nhập theo tấn)',
     type: [PlanItemDto],

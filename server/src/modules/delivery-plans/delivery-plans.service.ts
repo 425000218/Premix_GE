@@ -360,6 +360,7 @@ export class DeliveryPlansService {
           WeekStartDate: dto.weekStartDate,
           FactoryID: dto.factoryId,
           PlansJson: plansJson,
+          MaterialID: dto.materialId ?? null,
           IPAddress: ipAddress ?? null,
         },
       );

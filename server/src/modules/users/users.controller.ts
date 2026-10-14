@@ -66,6 +66,7 @@ export class UsersController {
     const result = await this.usersService.createUser(
       dto,
       req.user.username,
+      req.user.userId,
       ip || '127.0.0.1',
     );
     return {

@@ -321,25 +321,34 @@ BEGIN
             RETURN;
         END;
 
-        -- 2.5. Tự động bổ sung Nhà cung cấp mới từ PO Pending & PO Receipt (BR-21)
+        -- 2.5. Tự động bổ sung Nhà cung cấp mới CHỈ TỪ PO Pending (BR-21)
         INSERT INTO dbo.dim_Supplier (SupplierCode, SupplierName, VendorGroup, Country, LeadTimeDays, IsActive, CreatedAt, UpdatedAt)
         SELECT DISTINCT
-            v.VendorAccount,
-            ISNULL(MAX(v.VendorName), N'NCC Tự động (' + v.VendorAccount + N')'),
-            ISNULL(MAX(v.VendorGroup), 'LOC_AUTO'),
+            po.VendorAccount,
+            ISNULL(MAX(po.VendorName), N'NCC Tự động (' + po.VendorAccount + N')'),
+            ISNULL(MAX(po.VendorGroup), 'LOC_AUTO'),
             N'Vietnam',
             7,
             1,
             SYSUTCDATETIME(),
             SYSUTCDATETIME()
-        FROM (
-            SELECT VendorAccount, VendorName, VendorGroup FROM #StagingPoPending
-            UNION ALL
-            SELECT VendorAccount, NULL AS VendorName, NULL AS VendorGroup FROM #StagingPoReceipt
-        ) v
-        LEFT JOIN dbo.dim_Supplier s ON s.SupplierCode = v.VendorAccount
-        WHERE s.SupplierID IS NULL AND v.VendorAccount <> ''
-        GROUP BY v.VendorAccount;
+        FROM #StagingPoPending po
+        LEFT JOIN dbo.dim_Supplier s ON s.SupplierCode = po.VendorAccount
+        WHERE s.SupplierID IS NULL AND po.VendorAccount IS NOT NULL AND LTRIM(RTRIM(po.VendorAccount)) <> ''
+        GROUP BY po.VendorAccount;
+
+        -- 2.6. Kiểm tra NCC lạ trong PO Receipt (BR-21: File POR không có cột Vendor Group nên bắt buộc phải tồn tại trong Master Data)
+        DECLARE @UnknownPorVendor NVARCHAR(100);
+        SELECT TOP 1 @UnknownPorVendor = por.VendorAccount
+        FROM #StagingPoReceipt por
+        LEFT JOIN dbo.dim_Supplier s ON s.SupplierCode = por.VendorAccount
+        WHERE s.SupplierID IS NULL AND por.VendorAccount IS NOT NULL AND LTRIM(RTRIM(por.VendorAccount)) <> '';
+
+        IF @UnknownPorVendor IS NOT NULL
+        BEGIN
+            RAISERROR(N'Vi phạm BR-21: Mã nhà cung cấp "%s" trong file PO Receipt chưa tồn tại trong Master Data (File POR không có cột Vendor Group nên không thể tự động tạo).', 16, 1, @UnknownPorVendor);
+            RETURN;
+        END;
 
         -- ---------------------------------------------------------------------------------
         -- BƯỚC 3: KIỂM TRA CHÉO CHẤT LƯỢNG DỮ LIỆU (BR-21a & BR-15d 5 BÀI KIỂM TRA)
@@ -501,6 +510,28 @@ BEGIN
         INNER JOIN dbo.dim_Material m ON m.MaterialCode = doc.ItemCode
         WHERE m.BagKg IS NOT NULL AND m.BagKg > 0 AND (CAST(doc.QtyKg AS BIGINT) % CAST(m.BagKg AS BIGINT)) <> 0;
 
+        -- 3.6. BR-18: Kiểm tra trùng số POR ngoài khoảng ngày của file (Không ghi đè, không tự xóa)
+        DECLARE @EffPorStartVal DATE = COALESCE(@PorStartDate, (SELECT MIN(DeliveryDate) FROM #StagingPoReceipt), @SnapshotDate);
+        DECLARE @EffPorEndVal DATE = COALESCE(@PorEndDate, (SELECT MAX(DeliveryDate) FROM #StagingPoReceipt), @SnapshotDate);
+
+        INSERT INTO #TempQualityIssues (FactoryID, MaterialID, IssueType, Severity, Description)
+        SELECT DISTINCT
+            existing.FactoryID,
+            existing.MaterialID,
+            'POR_DUPLICATE_OUTSIDE_DATE_RANGE',
+            'WARNING',
+            FORMATMESSAGE(
+                N'Phiếu nhận hàng %s trùng số phiếu với phiếu đã tồn tại ngày %s nằm ngoài khoảng ngày của file (%s đến %s). Không được ghi đè hay tự xóa (BR-18).',
+                por.ReceiptNumber,
+                CONVERT(VARCHAR(10), existing.DeliveryDate, 23),
+                CONVERT(VARCHAR(10), @EffPorStartVal, 23),
+                CONVERT(VARCHAR(10), @EffPorEndVal, 23)
+            )
+        FROM #StagingPoReceipt por
+        INNER JOIN dbo.dim_Material m ON m.MaterialCode = por.ItemCode
+        INNER JOIN dbo.fact_PO_Receipt existing ON existing.ReceiptNumber = por.ReceiptNumber AND existing.MaterialID = m.MaterialID
+        WHERE existing.DeliveryDate < @EffPorStartVal OR existing.DeliveryDate > @EffPorEndVal;
+
         -- Đếm số dòng hợp lệ của 5 bảng
         DECLARE @OnHandRawCount INT = (SELECT COUNT(*) FROM #StagingOnHand WHERE SubInv = 'RAW' AND SohQtyKg > 0);
         DECLARE @MovementCount INT = (SELECT COUNT(*) FROM #StagingMovement);
@@ -627,18 +658,12 @@ BEGIN
         INNER JOIN dbo.dim_Material m ON m.MaterialCode = po.ItemCode
         GROUP BY po.PONumber, m.MaterialID, po.DeliveryDate, f.FactoryID;
 
-        -- 4.4. Ghi fact_PO_Receipt (BR-18 & BR-18a: Xóa và ghi đè trong khoảng ngày của file POR)
+        -- 4.4. Ghi fact_PO_Receipt (BR-18 & BR-18a: Xóa và ghi đè CHỈ trong khoảng ngày của file POR, không xóa ngoài khoảng ngày)
         DECLARE @EffPorStart DATE = COALESCE(@PorStartDate, (SELECT MIN(DeliveryDate) FROM #StagingPoReceipt), @SnapshotDate);
         DECLARE @EffPorEnd DATE = COALESCE(@PorEndDate, (SELECT MAX(DeliveryDate) FROM #StagingPoReceipt), @SnapshotDate);
 
         DELETE FROM dbo.fact_PO_Receipt
         WHERE DeliveryDate BETWEEN @EffPorStart AND @EffPorEnd;
-
-        -- Xóa trùng ReceiptNumber + MaterialID nếu có phiếu đổi ngày
-        DELETE target
-        FROM dbo.fact_PO_Receipt target
-        INNER JOIN #StagingPoReceipt src ON target.ReceiptNumber = src.ReceiptNumber
-        INNER JOIN dbo.dim_Material m ON m.MaterialCode = src.ItemCode AND target.MaterialID = m.MaterialID;
 
         INSERT INTO dbo.fact_PO_Receipt (
             ReceiptNumber, MaterialID, FactoryID, SupplierID, PONumber,
@@ -661,9 +686,16 @@ BEGIN
         INNER JOIN dbo.dim_Factory f ON (f.WarehouseCode = por.OrgCode OR f.FactoryCode = por.OrgCode)
         INNER JOIN dbo.dim_Material m ON m.MaterialCode = por.ItemCode
         INNER JOIN dbo.dim_Supplier s ON s.SupplierCode = por.VendorAccount
+        WHERE NOT EXISTS (
+            -- Bỏ qua dòng trùng với phiếu đã tồn tại ngoài khoảng ngày (BR-18)
+            SELECT 1 FROM dbo.fact_PO_Receipt ex
+            WHERE ex.ReceiptNumber = por.ReceiptNumber 
+              AND ex.MaterialID = m.MaterialID
+              AND (ex.DeliveryDate < @EffPorStart OR ex.DeliveryDate > @EffPorEnd)
+        )
         GROUP BY por.ReceiptNumber, m.MaterialID, f.FactoryID, s.SupplierID;
 
-        -- 4.5. Ghi fact_Internal_Transfer (BR-19a: Upsert theo TransferNumber + MaterialID)
+        -- 4.5. Ghi fact_Internal_Transfer (BR-19a: Upsert theo TransferNumber + MaterialID, CHỐNG LÙI TRẠNG THÁI)
         MERGE dbo.fact_Internal_Transfer AS target
         USING (
             SELECT
@@ -691,11 +723,29 @@ BEGIN
                 target.ToWarehouse = source.ToWarehouse,
                 target.FromFactoryID = source.FromFactoryID,
                 target.ToFactoryID = source.ToFactoryID,
-                target.TransferStatus = source.TransferStatus,
-                target.ShippedDate = source.ShippedDate,
-                target.ReceivedDate = source.ReceivedDate,
-                target.ShippedQtyKg = source.ShippedQtyKg,
-                target.PostedQtyKg = source.PostedQtyKg,
+                -- BR-19a: Trạng thái TO không được phép lùi (CREATED < SHIPPED < RECEIVED < CANCELLED)
+                target.TransferStatus = CASE 
+                    WHEN (CASE UPPER(source.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 WHEN 'CANCELLED' THEN 4 ELSE 0 END) 
+                         >= (CASE UPPER(target.TransferStatus) WHEN 'CREATED' THEN 1 WHEN 'SHIPPED' THEN 2 WHEN 'RECEIVED' THEN 3 WHEN 'CANCELLED' THEN 4 ELSE 0 END)
+                    THEN source.TransferStatus
+                    ELSE target.TransferStatus
+                END,
+                target.ShippedDate = COALESCE(source.ShippedDate, target.ShippedDate),
+                target.ReceivedDate = CASE 
+                    WHEN UPPER(target.TransferStatus) = 'RECEIVED' AND UPPER(source.TransferStatus) <> 'RECEIVED' 
+                    THEN target.ReceivedDate 
+                    ELSE COALESCE(source.ReceivedDate, target.ReceivedDate) 
+                END,
+                target.ShippedQtyKg = CASE 
+                    WHEN UPPER(target.TransferStatus) = 'RECEIVED' AND UPPER(source.TransferStatus) <> 'RECEIVED' 
+                    THEN target.ShippedQtyKg 
+                    ELSE source.ShippedQtyKg 
+                END,
+                target.PostedQtyKg = CASE 
+                    WHEN UPPER(target.TransferStatus) = 'RECEIVED' AND UPPER(source.TransferStatus) <> 'RECEIVED' 
+                    THEN target.PostedQtyKg 
+                    ELSE source.PostedQtyKg 
+                END,
                 target.BatchID = @BatchID,
                 target.UpdatedAt = SYSUTCDATETIME()
         WHEN NOT MATCHED THEN

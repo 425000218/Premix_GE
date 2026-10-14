@@ -114,6 +114,7 @@ export class UsersService {
   async createUser(
     dto: CreateUserDto,
     currentUsername: string = 'admin',
+    currentUserId: number = 1,
     ip: string = '127.0.0.1',
   ): Promise<any> {
     // 1. Kiểm tra ràng buộc BR-02b: vai trò FACTORY (scope ASSIGNED) bắt buộc chọn ít nhất 1 nhà máy
@@ -137,13 +138,15 @@ export class UsersService {
       const result = await this.procedureService.executeProcedure<{ NewUserID: number }>(
         'usp_User_Create',
         {
+          CurrentUserID: currentUserId,
+          CurrentUsername: currentUsername,
           Username: dto.username,
           PasswordHash: passwordHash,
           FullName: dto.fullName,
           Email: dto.email || null,
           RoleCode: dto.roleCode,
           FactoryIdsJson: factoryIdsJson,
-          CreatedBy: currentUsername,
+          IPAddress: ip,
         },
       );
 
@@ -151,20 +154,6 @@ export class UsersService {
       if (!newUserId) {
         throw new BadRequestException('Không thể lấy ID người dùng mới tạo');
       }
-
-      // 4. Ghi Audit Log
-      await this.logAudit(
-        null,
-        currentUsername,
-        'USER_CREATE',
-        'User',
-        newUserId.toString(),
-        ip,
-        'SUCCESS',
-        null,
-        null,
-        JSON.stringify({ username: dto.username, roleCode: dto.roleCode }),
-      );
 
       return await this.getUserById(newUserId);
     } catch (err: any) {
@@ -175,7 +164,10 @@ export class UsersService {
         msg.includes('đã tồn tại') ||
         msg.includes('already exists')
       ) {
-        throw new ConflictException('Tên đăng nhập đã tồn tại trong hệ thống');
+        throw new ConflictException('Tên đăng nhập hoặc email đã tồn tại trong hệ thống');
+      }
+      if (msg.includes('Quy tắc A7') || msg.includes('50403')) {
+        throw new ForbiddenException(msg);
       }
       throw new BadRequestException(msg || 'Lỗi khi tạo người dùng');
     }
@@ -191,17 +183,6 @@ export class UsersService {
     currentUserId: number = 1,
     ip: string = '127.0.0.1',
   ): Promise<any> {
-    // Không thể tự khóa chính mình nếu là Admin
-    if (userId === currentUserId && dto.isActive === false) {
-      throw new ForbiddenException('Không thể tự khóa tài khoản quản trị của chính mình');
-    }
-    if (userId === 1 && dto.isActive === false) {
-      throw new ForbiddenException('Không thể tự khóa tài khoản quản trị tối cao của hệ thống');
-    }
-    if (userId === 1 && dto.roleCode !== ROLES.ADMIN) {
-      throw new ForbiddenException('Không thể hạ vai trò của tài khoản quản trị tối cao');
-    }
-
     if (dto.roleCode === ROLES.FACTORY && (!dto.factoryIds || dto.factoryIds.length === 0)) {
       throw new BadRequestException(
         'Vai trò phạm vi ASSIGNED bắt buộc phải gán ít nhất một nhà máy',
@@ -215,37 +196,27 @@ export class UsersService {
 
     try {
       await this.procedureService.executeProcedure('usp_User_Update', {
+        CurrentUserID: currentUserId,
+        CurrentUsername: currentUsername,
         UserID: userId,
         FullName: dto.fullName,
         Email: dto.email || null,
         RoleCode: dto.roleCode,
         IsActive: dto.isActive ? 1 : 0,
         FactoryIdsJson: factoryIdsJson,
-        UpdatedBy: currentUsername,
+        IPAddress: ip,
       });
-
-      await this.logAudit(
-        currentUserId,
-        currentUsername,
-        'USER_UPDATE',
-        'User',
-        userId.toString(),
-        ip,
-        'SUCCESS',
-        null,
-        null,
-        JSON.stringify({ fullName: dto.fullName, roleCode: dto.roleCode, isActive: dto.isActive }),
-      );
 
       return await this.getUserById(userId);
     } catch (err: any) {
-      if (err.message && err.message.includes('đã được sử dụng')) {
-        throw new ConflictException(err.message);
+      const msg = err.message || '';
+      if (msg.includes('đã được sử dụng') || msg.includes('50409')) {
+        throw new ConflictException(msg);
       }
-      if (err.message && err.message.includes('Không thể')) {
-        throw new ForbiddenException(err.message);
+      if (msg.includes('Không thể') || msg.includes('50403') || msg.includes('Quy tắc A7')) {
+        throw new ForbiddenException(msg);
       }
-      throw new BadRequestException(err.message || 'Lỗi khi cập nhật người dùng');
+      throw new BadRequestException(msg || 'Lỗi khi cập nhật người dùng');
     }
   }
 
@@ -262,23 +233,12 @@ export class UsersService {
     const factoryIdsJson = JSON.stringify(dto.factoryIds);
 
     await this.procedureService.executeProcedure('usp_User_AssignFactories', {
+      CurrentUserID: currentUserId,
+      CurrentUsername: currentUsername,
       UserID: userId,
       FactoryIdsJson: factoryIdsJson,
-      UpdatedBy: currentUsername,
+      IPAddress: ip,
     });
-
-    await this.logAudit(
-      currentUserId,
-      currentUsername,
-      'USER_ASSIGN_FACTORIES',
-      'User',
-      userId.toString(),
-      ip,
-      'SUCCESS',
-      null,
-      null,
-      JSON.stringify({ factoryIds: dto.factoryIds }),
-    );
 
     return { message: 'Cập nhật danh sách nhà máy thành công' };
   }
@@ -296,20 +256,12 @@ export class UsersService {
     const passwordHash = bcryptjs.hashSync(dto.newPassword, 10);
 
     await this.procedureService.executeProcedure('usp_User_ResetPassword', {
+      CurrentUserID: currentUserId,
+      CurrentUsername: currentUsername,
       UserID: userId,
       PasswordHash: passwordHash,
-      UpdatedBy: currentUsername,
+      IPAddress: ip,
     });
-
-    await this.logAudit(
-      currentUserId,
-      currentUsername,
-      'USER_RESET_PASSWORD',
-      'User',
-      userId.toString(),
-      ip,
-      'SUCCESS',
-    );
 
     return { message: 'Đặt lại mật khẩu thành công' };
   }
@@ -323,37 +275,24 @@ export class UsersService {
     currentUserId: number = 1,
     ip: string = '127.0.0.1',
   ): Promise<{ message: string }> {
-    if (userId === currentUserId || userId === 1) {
-      throw new ForbiddenException(
-        'Không thể tự xóa tài khoản của chính mình hoặc tài khoản Admin tối cao',
-      );
-    }
-
     try {
       await this.procedureService.executeProcedure('usp_User_Delete', {
+        CurrentUserID: currentUserId,
+        CurrentUsername: currentUsername,
         UserID: userId,
-        DeletedBy: currentUsername,
+        IPAddress: ip,
       });
-
-      await this.logAudit(
-        currentUserId,
-        currentUsername,
-        'USER_DELETE',
-        'User',
-        userId.toString(),
-        ip,
-        'SUCCESS',
-      );
 
       return { message: 'Xóa tài khoản người dùng thành công' };
     } catch (err: any) {
-      if (err.message && err.message.includes('dữ liệu giao dịch')) {
-        throw new ConflictException(err.message);
+      const msg = err.message || '';
+      if (msg.includes('dữ liệu giao dịch') || msg.includes('50409')) {
+        throw new ConflictException(msg);
       }
-      if (err.message && err.message.includes('Không thể')) {
-        throw new ForbiddenException(err.message);
+      if (msg.includes('Không thể') || msg.includes('50403') || msg.includes('tự xóa')) {
+        throw new ForbiddenException(msg);
       }
-      throw new BadRequestException(err.message || 'Lỗi khi xóa người dùng');
+      throw new BadRequestException(msg || 'Lỗi khi xóa người dùng');
     }
   }
 

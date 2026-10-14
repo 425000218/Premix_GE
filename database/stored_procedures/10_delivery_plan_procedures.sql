@@ -46,12 +46,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        -- 1. Kiểm tra phạm vi nhà máy của User
-        DECLARE @FactoryScope VARCHAR(20);
+        -- 1. Kiểm tra phạm vi nhà máy của User (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED' AND @FactoryID IS NOT NULL
         BEGIN
@@ -174,7 +179,7 @@ GO
 
 -- =====================================================================================
 -- 3. dbo.usp_DeliveryPlan_SaveWeek
--- Lưu toàn bộ lưới tuần của 1 Nhà máy trong 1 Transaction nguyên tử duy nhất (nhập TẤN, lưu KG)
+-- Lưu kế hoạch tuần có chọn lọc theo MaterialID (tránh xóa nhầm các nguyên liệu khác trong tuần)
 -- =====================================================================================
 CREATE OR ALTER PROCEDURE dbo.usp_DeliveryPlan_SaveWeek
     @UserID INT,
@@ -182,6 +187,7 @@ CREATE OR ALTER PROCEDURE dbo.usp_DeliveryPlan_SaveWeek
     @WeekStartDate VARCHAR(20),
     @FactoryID INT,
     @PlansJson NVARCHAR(MAX),
+    @MaterialID INT = NULL,
     @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
@@ -191,12 +197,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        -- 1. Kiểm tra phạm vi nhà máy của User
-        DECLARE @FactoryScope VARCHAR(20);
+        -- 1. Kiểm tra phạm vi nhà máy của User (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED'
         BEGIN
@@ -286,11 +297,28 @@ BEGIN
         DECLARE @OldPlansCount INT;
         SELECT @OldPlansCount = COUNT(*)
         FROM dbo.fact_Delivery_Plan WITH (UPDLOCK, HOLDLOCK)
-        WHERE FactoryID = @FactoryID AND PlanDate BETWEEN @WeekStart AND @WeekEnd;
+        WHERE FactoryID = @FactoryID 
+          AND PlanDate BETWEEN @WeekStart AND @WeekEnd
+          AND (
+              (@MaterialID IS NOT NULL AND MaterialID = @MaterialID)
+              OR (@MaterialID IS NULL AND MaterialID IN (SELECT DISTINCT MaterialID FROM #ParsedPlans))
+          );
 
-        -- 4. Xóa kế hoạch cũ của nhà máy trong tuần
-        DELETE FROM dbo.fact_Delivery_Plan
-        WHERE FactoryID = @FactoryID AND PlanDate BETWEEN @WeekStart AND @WeekEnd;
+        -- 4. Xóa kế hoạch cũ có chọn lọc (tránh xóa nhầm các nguyên liệu khác trong tuần)
+        IF @MaterialID IS NOT NULL
+        BEGIN
+            DELETE FROM dbo.fact_Delivery_Plan
+            WHERE FactoryID = @FactoryID 
+              AND PlanDate BETWEEN @WeekStart AND @WeekEnd
+              AND MaterialID = @MaterialID;
+        END
+        ELSE
+        BEGIN
+            DELETE FROM dbo.fact_Delivery_Plan
+            WHERE FactoryID = @FactoryID 
+              AND PlanDate BETWEEN @WeekStart AND @WeekEnd
+              AND MaterialID IN (SELECT DISTINCT MaterialID FROM #ParsedPlans);
+        END
 
         -- 5. Chèn toàn bộ các dòng mới
         INSERT INTO dbo.fact_Delivery_Plan (

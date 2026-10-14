@@ -1,3 +1,13 @@
+-- ============================================================================
+-- PHÂN HỆ F01c: QUẢN LÝ VAI TRÒ & PHÂN QUYỀN (ROLES & PERMISSIONS PROCEDURES)
+-- File: database/stored_procedures/14_role_procedures.sql
+-- Quy tắc áp dụng:
+--   - Default Deny & Kiểm tra người thực hiện (CurrentUserID, CurrentUsername)
+--   - Bảo vệ vai trò hệ thống cốt lõi (IsSystem = 1, ADMIN luôn toàn quyền scope ALL)
+--   - Nhật ký kiểm toán GV-09: Tự động ghi dbo.sys_Audit_Log cho mọi thao tác
+--   - Danh mục 27 mã quyền chuẩn hóa kèm UTF-8 tiếng Việt
+-- ============================================================================
+
 USE PremixTrack_DB;
 GO
 
@@ -38,6 +48,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
+
     -- Kết quả 1: Thông tin cơ bản của vai trò
     SELECT 
         r.RoleCode,
@@ -61,67 +73,69 @@ END;
 GO
 
 -- ============================================================================
--- 3. dbo.usp_Role_Create: Tạo mới vai trò tùy biến (IsSystem = 0)
+-- 3. dbo.usp_Role_Create: Tạo mới vai trò tùy biến (IsSystem = 0) & Audit GV-09
 -- ============================================================================
 CREATE OR ALTER PROCEDURE dbo.usp_Role_Create
+    @CurrentUserID INT,
+    @CurrentUsername NVARCHAR(50),
     @RoleCode VARCHAR(30),
     @RoleName NVARCHAR(100),
     @Description NVARCHAR(255) = NULL,
     @FactoryScope VARCHAR(10) = 'ALL',
     @PermissionsJson NVARCHAR(MAX) = NULL,
-    @CreatedBy NVARCHAR(50) = 'SYSTEM'
+    @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    -- Chuẩn hóa mã vai trò
-    SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
-
-    IF @RoleCode IS NULL OR LEN(@RoleCode) = 0
-    BEGIN
-        RAISERROR(N'Mã vai trò không được để trống', 16, 1);
-        RETURN;
-    END;
-
-    IF @FactoryScope NOT IN ('ALL', 'ASSIGNED')
-    BEGIN
-        RAISERROR(N'Phạm vi nhà máy không hợp lệ (chỉ chấp nhận ALL hoặc ASSIGNED)', 16, 1);
-        RETURN;
-    END;
-
     BEGIN TRY
+        -- 1. Kiểm tra người thực hiện (Default Deny)
+        DECLARE @CallerRoleCode VARCHAR(30) = NULL;
+        SELECT @CallerRoleCode = RoleCode
+        FROM dbo.sys_User
+        WHERE UserID = @CurrentUserID AND IsActive = 1;
+
+        IF @CallerRoleCode IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người thực hiện không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
+
+        -- 2. Chuẩn hóa & kiểm tra trường dữ liệu
+        SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
+
+        IF @RoleCode IS NULL OR LEN(@RoleCode) = 0
+        BEGIN
+            THROW 50400, N'[50400] Mã vai trò không được để trống.', 1;
+        END
+
+        IF @RoleName IS NULL OR LEN(LTRIM(RTRIM(@RoleName))) = 0
+        BEGIN
+            THROW 50400, N'[50400] Tên vai trò không được để trống.', 1;
+        END
+
+        IF @FactoryScope NOT IN ('ALL', 'ASSIGNED')
+        BEGIN
+            THROW 50400, N'[50400] Phạm vi nhà máy không hợp lệ (chỉ chấp nhận ALL hoặc ASSIGNED).', 1;
+        END
+
         BEGIN TRANSACTION;
 
-        -- 1. Kiểm tra trùng mã
+        -- 3. Kiểm tra trùng mã vai trò
         IF EXISTS (SELECT 1 FROM dbo.sys_Role WITH (UPDLOCK, HOLDLOCK) WHERE RoleCode = @RoleCode)
         BEGIN
-            RAISERROR(N'Mã vai trò đã tồn tại trong hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50409, N'[50409] Mã vai trò đã tồn tại trong hệ thống.', 1;
+        END
 
-        -- 2. Thêm vai trò mới (luôn IsSystem = 0 cho role tạo thủ công)
+        -- 4. Thêm vai trò mới (luôn IsSystem = 0 cho vai trò tạo tùy biến)
         INSERT INTO dbo.sys_Role (
-            RoleCode,
-            RoleName,
-            Description,
-            FactoryScope,
-            IsSystem,
-            CreatedAt,
-            UpdatedAt
+            RoleCode, RoleName, Description, FactoryScope, IsSystem, CreatedAt, UpdatedAt
         )
         VALUES (
-            @RoleCode,
-            @RoleName,
-            @Description,
-            @FactoryScope,
-            0,
-            SYSUTCDATETIME(),
-            SYSUTCDATETIME()
+            @RoleCode, @RoleName, @Description, @FactoryScope, 0, SYSUTCDATETIME(), SYSUTCDATETIME()
         );
 
-        -- 3. Thêm danh sách quyền nếu có
+        -- 5. Thêm danh sách quyền nếu có
         IF @PermissionsJson IS NOT NULL AND ISJSON(@PermissionsJson) = 1
         BEGIN
             INSERT INTO dbo.sys_Role_Permission (RoleCode, PermissionCode, CreatedAt)
@@ -131,19 +145,32 @@ BEGIN
                 SYSUTCDATETIME()
             FROM OPENJSON(@PermissionsJson)
             WHERE LTRIM(RTRIM(value)) <> '';
-        END;
+        END
+
+        -- 6. Ghi Audit Log (GV-09)
+        DECLARE @AuditNewValues NVARCHAR(MAX) = (
+            SELECT 
+                @RoleCode AS roleCode,
+                @RoleName AS roleName,
+                @Description AS description,
+                @FactoryScope AS factoryScope,
+                @PermissionsJson AS permissions
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+
+        INSERT INTO dbo.sys_Audit_Log (
+            Timestamp, UserID, Username, ActionCode, TargetEntity, TargetID, IPAddress, OldValues, NewValues, Status
+        )
+        VALUES (
+            SYSUTCDATETIME(), @CurrentUserID, @CurrentUsername, 'ROLE_CREATE', 'sys_Role',
+            @RoleCode, @IPAddress, NULL, @AuditNewValues, 'SUCCESS'
+        );
 
         COMMIT TRANSACTION;
 
         -- Trả về thông tin vừa tạo
         SELECT 
-            RoleCode,
-            RoleName,
-            Description,
-            FactoryScope,
-            IsSystem,
-            CreatedAt,
-            UpdatedAt
+            RoleCode, RoleName, Description, FactoryScope, IsSystem, CreatedAt, UpdatedAt
         FROM dbo.sys_Role
         WHERE RoleCode = @RoleCode;
 
@@ -151,60 +178,83 @@ BEGIN
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
         THROW;
-    END CATCH;
+    END CATCH
 END;
 GO
 
 -- ============================================================================
--- 4. dbo.usp_Role_Update: Cập nhật thông tin vai trò
+-- 4. dbo.usp_Role_Update: Cập nhật thông tin vai trò & Audit GV-09
 -- ============================================================================
 CREATE OR ALTER PROCEDURE dbo.usp_Role_Update
+    @CurrentUserID INT,
+    @CurrentUsername NVARCHAR(50),
     @RoleCode VARCHAR(30),
     @RoleName NVARCHAR(100),
     @Description NVARCHAR(255) = NULL,
     @FactoryScope VARCHAR(10) = 'ALL',
-    @UpdatedBy NVARCHAR(50) = 'SYSTEM'
+    @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
-
-    IF @FactoryScope NOT IN ('ALL', 'ASSIGNED')
-    BEGIN
-        RAISERROR(N'Phạm vi nhà máy không hợp lệ (chỉ chấp nhận ALL hoặc ASSIGNED)', 16, 1);
-        RETURN;
-    END;
-
     BEGIN TRY
+        -- 1. Kiểm tra người thực hiện (Default Deny)
+        DECLARE @CallerRoleCode VARCHAR(30) = NULL;
+        SELECT @CallerRoleCode = RoleCode
+        FROM dbo.sys_User
+        WHERE UserID = @CurrentUserID AND IsActive = 1;
+
+        IF @CallerRoleCode IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người thực hiện không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
+
+        SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
+
+        IF @FactoryScope NOT IN ('ALL', 'ASSIGNED')
+        BEGIN
+            THROW 50400, N'[50400] Phạm vi nhà máy không hợp lệ (chỉ chấp nhận ALL hoặc ASSIGNED).', 1;
+        END
+
         BEGIN TRANSACTION;
 
-        -- 1. Kiểm tra tồn tại
+        -- 2. Kiểm tra tồn tại
         DECLARE @IsSystem BIT;
-        SELECT @IsSystem = IsSystem
+        DECLARE @OldRoleName NVARCHAR(100);
+        DECLARE @OldDescription NVARCHAR(255);
+        DECLARE @OldFactoryScope VARCHAR(10);
+
+        SELECT 
+            @IsSystem = IsSystem,
+            @OldRoleName = RoleName,
+            @OldDescription = Description,
+            @OldFactoryScope = FactoryScope
         FROM dbo.sys_Role WITH (UPDLOCK, HOLDLOCK)
         WHERE RoleCode = @RoleCode;
 
         IF @IsSystem IS NULL
         BEGIN
-            RAISERROR(N'Vai trò không tồn tại trong hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50404, N'[50404] Vai trò không tồn tại trong hệ thống.', 1;
+        END
 
-        -- 2. Bảo vệ vai trò hệ thống ADMIN
-        IF @RoleCode = 'ADMIN'
+        -- 3. Bảo vệ vai trò hệ thống ADMIN
+        IF @RoleCode = 'ADMIN' AND @FactoryScope <> 'ALL'
         BEGIN
-            IF @FactoryScope <> 'ALL'
-            BEGIN
-                RAISERROR(N'Vai trò ADMIN bắt buộc phải có phạm vi toàn hệ thống (ALL)', 16, 1);
-                ROLLBACK TRANSACTION;
-                RETURN;
-            END;
-        END;
+            THROW 50400, N'[50400] Vai trò ADMIN bắt buộc phải có phạm vi toàn hệ thống (ALL).', 1;
+        END
 
-        -- 3. Cập nhật
+        -- 4. Thu thập OldValues để ghi Audit
+        DECLARE @AuditOldValues NVARCHAR(MAX) = (
+            SELECT 
+                @RoleCode AS roleCode,
+                @OldRoleName AS roleName,
+                @OldDescription AS description,
+                @OldFactoryScope AS factoryScope
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+
+        -- 5. Cập nhật
         UPDATE dbo.sys_Role
         SET 
             RoleName = @RoleName,
@@ -213,17 +263,29 @@ BEGIN
             UpdatedAt = SYSUTCDATETIME()
         WHERE RoleCode = @RoleCode;
 
+        -- 6. Thu thập NewValues & Ghi Audit Log (GV-09)
+        DECLARE @AuditNewValues NVARCHAR(MAX) = (
+            SELECT 
+                @RoleCode AS roleCode,
+                @RoleName AS roleName,
+                @Description AS description,
+                CASE WHEN @RoleCode = 'ADMIN' THEN 'ALL' ELSE @FactoryScope END AS factoryScope
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+
+        INSERT INTO dbo.sys_Audit_Log (
+            Timestamp, UserID, Username, ActionCode, TargetEntity, TargetID, IPAddress, OldValues, NewValues, Status
+        )
+        VALUES (
+            SYSUTCDATETIME(), @CurrentUserID, @CurrentUsername, 'ROLE_UPDATE', 'sys_Role',
+            @RoleCode, @IPAddress, @AuditOldValues, @AuditNewValues, 'SUCCESS'
+        );
+
         COMMIT TRANSACTION;
 
         -- Trả về kết quả
         SELECT 
-            RoleCode,
-            RoleName,
-            Description,
-            FactoryScope,
-            IsSystem,
-            CreatedAt,
-            UpdatedAt
+            RoleCode, RoleName, Description, FactoryScope, IsSystem, CreatedAt, UpdatedAt
         FROM dbo.sys_Role
         WHERE RoleCode = @RoleCode;
 
@@ -231,60 +293,86 @@ BEGIN
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
         THROW;
-    END CATCH;
+    END CATCH
 END;
 GO
 
 -- ============================================================================
--- 5. dbo.usp_Role_Delete: Xóa vai trò tùy biến
+-- 5. dbo.usp_Role_Delete: Xóa vai trò tùy biến & Audit GV-09
 -- ============================================================================
 CREATE OR ALTER PROCEDURE dbo.usp_Role_Delete
+    @CurrentUserID INT,
+    @CurrentUsername NVARCHAR(50),
     @RoleCode VARCHAR(30),
-    @DeletedBy NVARCHAR(50) = 'SYSTEM'
+    @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
-
     BEGIN TRY
+        -- 1. Kiểm tra người thực hiện (Default Deny)
+        DECLARE @CallerRoleCode VARCHAR(30) = NULL;
+        SELECT @CallerRoleCode = RoleCode
+        FROM dbo.sys_User
+        WHERE UserID = @CurrentUserID AND IsActive = 1;
+
+        IF @CallerRoleCode IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người thực hiện không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
+
+        SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
+
         BEGIN TRANSACTION;
 
-        -- 1. Kiểm tra tồn tại và IsSystem
+        -- 2. Kiểm tra tồn tại và IsSystem
         DECLARE @IsSystem BIT;
-        SELECT @IsSystem = IsSystem
+        DECLARE @OldRoleName NVARCHAR(100);
+
+        SELECT 
+            @IsSystem = IsSystem,
+            @OldRoleName = RoleName
         FROM dbo.sys_Role WITH (UPDLOCK, HOLDLOCK)
         WHERE RoleCode = @RoleCode;
 
         IF @IsSystem IS NULL
         BEGIN
-            RAISERROR(N'Vai trò không tồn tại trong hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50404, N'[50404] Vai trò không tồn tại trong hệ thống.', 1;
+        END
 
-        -- Chặn xóa vai trò hệ thống
+        -- Chặn xóa vai trò hệ thống mặc định (IsSystem = 1)
         IF @IsSystem = 1 OR @RoleCode IN ('ADMIN', 'PLANNER', 'FACTORY', 'VIEWER')
         BEGIN
-            RAISERROR(N'Không thể xóa vai trò hệ thống mặc định (IsSystem = 1)', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50403, N'[50403] Không thể xóa vai trò hệ thống mặc định (IsSystem = 1).', 1;
+        END
 
-        -- 2. Chặn xóa nếu còn người dùng gán vai trò này
+        -- 3. Chặn xóa nếu còn người dùng gán vai trò này
         IF EXISTS (SELECT 1 FROM dbo.sys_User WHERE RoleCode = @RoleCode)
         BEGIN
-            RAISERROR(N'Không thể xóa vai trò đang được gán cho người dùng trong hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50409, N'[50409] Không thể xóa vai trò đang được gán cho người dùng trong hệ thống.', 1;
+        END
 
-        -- 3. Xóa ma trận quyền liên kết (nếu chưa cascade)
+        -- 4. Thu thập OldValues để ghi Audit
+        DECLARE @AuditOldValues NVARCHAR(MAX) = (
+            SELECT 
+                @RoleCode AS roleCode,
+                @OldRoleName AS roleName
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+
+        -- 5. Xóa ma trận quyền liên kết và xóa vai trò
         DELETE FROM dbo.sys_Role_Permission WHERE RoleCode = @RoleCode;
-
-        -- 4. Xóa vai trò
         DELETE FROM dbo.sys_Role WHERE RoleCode = @RoleCode;
+
+        -- 6. Ghi Audit Log (GV-09)
+        INSERT INTO dbo.sys_Audit_Log (
+            Timestamp, UserID, Username, ActionCode, TargetEntity, TargetID, IPAddress, OldValues, NewValues, Status
+        )
+        VALUES (
+            SYSUTCDATETIME(), @CurrentUserID, @CurrentUsername, 'ROLE_DELETE', 'sys_Role',
+            @RoleCode, @IPAddress, @AuditOldValues, NULL, 'SUCCESS'
+        );
 
         COMMIT TRANSACTION;
 
@@ -294,7 +382,7 @@ BEGIN
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
         THROW;
-    END CATCH;
+    END CATCH
 END;
 GO
 
@@ -346,7 +434,7 @@ BEGIN
         -- 7. Đề nghị mua hàng (PR)
         ('purchase-request.view', N'Xem Đề nghị mua hàng (PR)', 'PURCHASE_REQUEST', N'Đề nghị mua hàng (PR)', N'Xem danh sách PR, gợi ý mua và phân tích nhu cầu', 17),
         ('purchase-request.create', N'Tạo Đề nghị mua hàng', 'PURCHASE_REQUEST', N'Đề nghị mua hàng (PR)', N'Tạo PR thủ công hoặc chuyển từ gợi ý mua tự động', 18),
-        ('purchase-request.status', N'Duyệt / Chuyển trạng thái PR', 'PURCHASE_REQUEST', N'Đề nghị mua hàng (PR)', N'Chuyển trạng thái PR (SUBMITTED, APPROVED, ORDERED, CANCELLED)', 19),
+        ('purchase-request.status', N'Duyệt / Chuyển trạng thái PR', 'PURCHASE_REQUEST', N'Đề nghị mua hàng (PR)', N'Chuyển trạng thái PR (SENT, MATCHED, EXPIRED, CANCELLED)', 19),
         ('purchase-request.export', N'Xuất Excel Đề nghị mua', 'PURCHASE_REQUEST', N'Đề nghị mua hàng (PR)', N'Xuất báo cáo PR dạng bảng tính Excel chuẩn ERP', 20),
 
         -- 8. Người dùng & Vai trò
@@ -365,42 +453,58 @@ END;
 GO
 
 -- ============================================================================
--- 7. dbo.usp_Role_SetPermissions: Cập nhật ma trận quyền cho vai trò
+-- 7. dbo.usp_Role_SetPermissions: Cập nhật ma trận quyền cho vai trò & Audit GV-09
 -- ============================================================================
 CREATE OR ALTER PROCEDURE dbo.usp_Role_SetPermissions
+    @CurrentUserID INT,
+    @CurrentUsername NVARCHAR(50),
     @RoleCode VARCHAR(30),
     @PermissionsJson NVARCHAR(MAX),
-    @UpdatedBy NVARCHAR(50) = 'SYSTEM'
+    @IPAddress VARCHAR(45) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
-
     BEGIN TRY
+        -- 1. Kiểm tra người thực hiện (Default Deny)
+        DECLARE @CallerRoleCode VARCHAR(30) = NULL;
+        SELECT @CallerRoleCode = RoleCode
+        FROM dbo.sys_User
+        WHERE UserID = @CurrentUserID AND IsActive = 1;
+
+        IF @CallerRoleCode IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người thực hiện không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
+
+        SET @RoleCode = UPPER(LTRIM(RTRIM(@RoleCode)));
+
         BEGIN TRANSACTION;
 
-        -- 1. Kiểm tra tồn tại
+        -- 2. Kiểm tra tồn tại
         IF NOT EXISTS (SELECT 1 FROM dbo.sys_Role WITH (UPDLOCK, HOLDLOCK) WHERE RoleCode = @RoleCode)
         BEGIN
-            RAISERROR(N'Vai trò không tồn tại trong hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50404, N'[50404] Vai trò không tồn tại trong hệ thống.', 1;
+        END
 
-        -- 2. Chặn can thiệp quyền của ADMIN hệ thống
+        -- 3. Chặn can thiệp quyền của ADMIN hệ thống
         IF @RoleCode = 'ADMIN'
         BEGIN
-            RAISERROR(N'Không được phép tùy biến quyền của vai trò ADMIN hệ thống', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END;
+            THROW 50403, N'[50403] Không được phép tùy biến quyền của vai trò ADMIN hệ thống.', 1;
+        END
 
-        -- 3. Xóa các quyền hiện tại của vai trò
+        -- 4. Thu thập danh sách quyền cũ (OldValues)
+        DECLARE @AuditOldValues NVARCHAR(MAX) = (
+            SELECT STRING_AGG(PermissionCode, ',')
+            FROM dbo.sys_Role_Permission
+            WHERE RoleCode = @RoleCode
+        );
+
+        -- 5. Xóa các quyền hiện tại của vai trò
         DELETE FROM dbo.sys_Role_Permission WHERE RoleCode = @RoleCode;
 
-        -- 4. Chèn danh sách quyền mới từ JSON
+        -- 6. Chèn danh sách quyền mới từ JSON
         IF @PermissionsJson IS NOT NULL AND ISJSON(@PermissionsJson) = 1
         BEGIN
             INSERT INTO dbo.sys_Role_Permission (RoleCode, PermissionCode, CreatedAt)
@@ -410,12 +514,21 @@ BEGIN
                 SYSUTCDATETIME()
             FROM OPENJSON(@PermissionsJson)
             WHERE LTRIM(RTRIM(value)) <> '';
-        END;
+        END
 
-        -- 5. Cập nhật UpdatedAt của vai trò
+        -- 7. Cập nhật UpdatedAt của vai trò
         UPDATE dbo.sys_Role
         SET UpdatedAt = SYSUTCDATETIME()
         WHERE RoleCode = @RoleCode;
+
+        -- 8. Ghi Audit Log (GV-09)
+        INSERT INTO dbo.sys_Audit_Log (
+            Timestamp, UserID, Username, ActionCode, TargetEntity, TargetID, IPAddress, OldValues, NewValues, Status
+        )
+        VALUES (
+            SYSUTCDATETIME(), @CurrentUserID, @CurrentUsername, 'ROLE_SET_PERMISSIONS', 'sys_Role_Permission',
+            @RoleCode, @IPAddress, @AuditOldValues, @PermissionsJson, 'SUCCESS'
+        );
 
         COMMIT TRANSACTION;
 
@@ -429,6 +542,6 @@ BEGIN
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
         THROW;
-    END CATCH;
+    END CATCH
 END;
 GO

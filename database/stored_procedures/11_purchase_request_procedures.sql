@@ -66,12 +66,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        -- 1. Kiểm tra phạm vi nhà máy của user
-        DECLARE @FactoryScope VARCHAR(20);
+        -- 1. Kiểm tra phạm vi nhà máy của user (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED'
         BEGIN
@@ -221,12 +226,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        -- 1. Kiểm tra phạm vi nhà máy của user
-        DECLARE @FactoryScope VARCHAR(20);
+        -- 1. Kiểm tra phạm vi nhà máy của user (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         BEGIN TRANSACTION;
 
@@ -383,11 +393,17 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        DECLARE @FactoryScope VARCHAR(20);
+        -- Kiểm tra phạm vi nhà máy của user (Default Deny)
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED' AND @FactoryID IS NOT NULL
         BEGIN
@@ -489,11 +505,16 @@ BEGIN
     SET QUOTED_IDENTIFIER ON;
 
     BEGIN TRY
-        DECLARE @FactoryScope VARCHAR(20);
+        DECLARE @FactoryScope VARCHAR(20) = NULL;
         SELECT @FactoryScope = r.FactoryScope
         FROM dbo.sys_User u
         INNER JOIN dbo.sys_Role r ON u.RoleCode = r.RoleCode
-        WHERE u.UserID = @UserID;
+        WHERE u.UserID = @UserID AND u.IsActive = 1;
+
+        IF @FactoryScope IS NULL
+        BEGIN
+            THROW 50401, N'[50401] Người dùng không tồn tại hoặc tài khoản đã bị vô hiệu hóa.', 1;
+        END
 
         IF @FactoryScope = 'ASSIGNED' AND @FactoryID IS NOT NULL
         BEGIN
