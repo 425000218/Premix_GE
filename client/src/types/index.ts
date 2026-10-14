@@ -9,7 +9,7 @@ export interface User {
   username: string;
   fullName: string;
   email?: string;
-  roleId: number;
+  roleId?: number;
   roleCode: string;
   roleName: string;
   factoryScope: 'ALL' | 'ASSIGNED';

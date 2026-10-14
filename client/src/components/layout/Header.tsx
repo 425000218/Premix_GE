@@ -48,11 +48,13 @@ export const Header: React.FC = () => {
           <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center text-slate-700 font-semibold text-xs">
             {user?.fullName?.charAt(0) || <UserIcon className="w-4 h-4" />}
           </div>
-          <div className="hidden sm:block text-left">
-            <div className="text-xs font-semibold text-slate-900">{user?.fullName || user?.username}</div>
-            <div className="flex items-center gap-1 text-[10px] text-slate-500">
-              <Shield className="w-3 h-3 text-emerald-600" />
-              <span>{user?.roleName || user?.roleCode}</span>
+          <div className="flex flex-col text-left">
+            <div className="text-xs font-semibold text-slate-900 leading-tight">
+              {user?.fullName || user?.username || 'Quản trị viên'}
+            </div>
+            <div className="flex items-center gap-1 text-[10px] text-slate-500 leading-tight mt-0.5">
+              <Shield className="w-3 h-3 text-emerald-600 shrink-0" />
+              <span>{user?.roleName || user?.roleCode || 'Quản trị hệ thống'}</span>
             </div>
           </div>
         </div>

@@ -4,12 +4,30 @@ import { AuthResponse, User } from '../types';
 export const authApi = {
   login: async (credentials: { username: string; password: string }): Promise<AuthResponse> => {
     const res = await apiClient.post('/auth/login', credentials);
-    return res.data?.data || res.data;
+    const data = res.data?.data || res.data;
+    if (data && data.user) {
+      return {
+        ...data,
+        user: {
+          ...data.user,
+          permissions: data.permissions || [],
+        },
+      };
+    }
+    return data;
   },
 
   getMe: async (): Promise<User> => {
     const res = await apiClient.get('/auth/me');
-    return res.data?.data || res.data;
+    const data = res.data?.data || res.data;
+    if (data && data.user) {
+      return {
+        ...data.user,
+        permissions: data.permissions || [],
+        factories: data.factories || [],
+      };
+    }
+    return data;
   },
 
   logout: async (): Promise<void> => {
