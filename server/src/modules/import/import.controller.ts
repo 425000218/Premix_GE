@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -31,6 +32,11 @@ import { ImportDailySetQueryDto } from './dto/import-daily-set-query.dto.js';
 import { ImportForecastQueryDto } from './dto/import-forecast-query.dto.js';
 import { ImportHistoryQueryDto } from './dto/import-history-query.dto.js';
 import { ImportMasterQueryDto } from './dto/import-master-query.dto.js';
+import {
+  BatchImportScannedDto,
+  ImportScannedFolderDto,
+  ScanDirectoryQueryDto,
+} from './dto/scan-directory.dto.js';
 import { type DailySetFiles, ImportService } from './import.service.js';
 
 @ApiTags('Data Ingestion (Import)')
@@ -265,6 +271,69 @@ export class ImportController {
     return {
       message: 'Lấy danh sách cảnh báo chất lượng thành công',
       data: result.issues,
+    };
+  }
+
+  @Get('scan-directory')
+  @RequirePermissions('import.view')
+  @ApiOperation({
+    summary: 'Quét thư mục máy chủ để tìm các đợt nạp ERP theo quy tắc folder ddmmyy',
+    description:
+      'Duyệt tìm tất cả các thư mục con có tên theo định dạng 6 chữ số ddmmyy, kiểm tra đủ 5 file ERP và so khớp trạng thái nạp CSDL.',
+  })
+  @ApiResponse({ status: 200, description: 'Quét thư mục thành công' })
+  async scanDirectory(@Query() query: ScanDirectoryQueryDto) {
+    const result = await this.importService.scanDirectory(query.dirPath);
+    return {
+      message: `Quét thư mục hoàn tất. Tìm thấy ${result.totalFolders} thư mục ngày chốt ERP.`,
+      data: result,
+    };
+  }
+
+  @Post('import-scanned-folder')
+  @RequirePermissions('import.run')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Nạp trực tiếp một thư mục ngày chốt đã quét từ ổ đĩa máy chủ (1-click)',
+    description:
+      'Đọc 5 file ERP từ thư mục cục bộ của máy chủ/máy trạm, thực thi nạp nguyên tử 1 Transaction trong dbo.usp_Import_DailySet.',
+  })
+  @ApiResponse({ status: 200, description: 'Nạp thư mục thành công' })
+  async importScannedFolder(@Body() dto: ImportScannedFolderDto, @Req() req: any) {
+    const username = req.user?.username || 'ADMIN';
+    const result = await this.importService.importScannedFolder(
+      dto.folderPath,
+      username,
+      dto.dryRun ?? false,
+      dto.snapshotDate,
+    );
+    return {
+      message: dto.dryRun
+        ? 'Kiểm tra thư mục ngày chốt hoàn tất (Chế độ xem trước - Dry-run)'
+        : 'Nạp thư mục ngày chốt vào CSDL thành công',
+      data: result,
+    };
+  }
+
+  @Post('batch-import-scanned')
+  @RequirePermissions('import.run')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Nạp hàng loạt nhiều thư mục ngày chốt theo thứ tự thời gian tăng dần',
+    description:
+      'Chạy tuần tự nạp từng thư mục ngày chốt từ ngày cũ nhất đến ngày mới nhất, kiểm soát transaction từng ngày.',
+  })
+  @ApiResponse({ status: 200, description: 'Nạp hàng loạt hoàn tất' })
+  async batchImportScanned(@Body() dto: BatchImportScannedDto, @Req() req: any) {
+    const username = req.user?.username || 'ADMIN';
+    const result = await this.importService.batchImportScannedFolders(
+      dto.folderPaths,
+      username,
+      dto.dryRun ?? false,
+    );
+    return {
+      message: `Nạp hàng loạt hoàn tất: ${result.successCount} thành công, ${result.failedCount} thất bại.`,
+      data: result,
     };
   }
 }

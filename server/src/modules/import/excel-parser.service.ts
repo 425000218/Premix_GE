@@ -234,15 +234,15 @@ export class ExcelParserService {
       workbook.Sheets[sheetName],
       'Inventory Movement (INV46)',
       [
-        { name: 'Org Code', aliases: ['org code', 'warehouse'] },
-        { name: 'Item code', aliases: ['item code', 'item number'] },
-        { name: 'Begin Onhand', aliases: ['begin onhand', 'begin on hand'] },
-        { name: 'Qty Receive', aliases: ['qty receive', 'receive'] },
-        { name: 'Wip Issue', aliases: ['wip issue', 'issue'] },
-        { name: 'Transfer In', aliases: ['transfer in'] },
-        { name: 'Transfer Out', aliases: ['transfer out'] },
-        { name: 'Adjust', aliases: ['adjust', 'adjustment'] },
-        { name: 'Closed Onhand', aliases: ['closed onhand', 'closed on hand'] },
+        { name: 'Org Code', aliases: ['org code', 'warehouse', 'wh'] },
+        { name: 'Item code', aliases: ['item code', 'item number', 'item'] },
+        { name: 'Begin Onhand', aliases: ['begin onhand qty', 'begin onhand', 'begin on hand', 'begin on hand qty', 'begin qty', 'soh đầu kỳ'] },
+        { name: 'Qty Receive', aliases: ['qty receive', 'qty receive qty', 'receive qty', 'receive', 'nhập kho'] },
+        { name: 'Wip Issue', aliases: ['wip issue qty', 'wip issue', 'issue qty', 'issue', 'xuất sản xuất'] },
+        { name: 'Transfer In', aliases: ['transfer in qty', 'transfer in', 'chuyển đến'] },
+        { name: 'Transfer Out', aliases: ['transfer out qty', 'transfer out', 'chuyển đi'] },
+        { name: 'Adjust', aliases: ['adjust qty', 'adjustment qty', 'adjust', 'adjustment', 'điều chỉnh'] },
+        { name: 'Closed Onhand', aliases: ['closed onhand qty', 'closed onhand', 'closed on hand', 'closed on hand qty', 'closed qty', 'soh cuối kỳ'] },
       ],
     );
 
@@ -251,8 +251,8 @@ export class ExcelParserService {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const orgCode = this.getCell(row, ['org code', 'warehouse']);
-      const itemCode = this.getCell(row, ['item code', 'item number']);
+      const orgCode = this.getCell(row, ['org code', 'warehouse', 'wh']);
+      const itemCode = this.getCell(row, ['item code', 'item number', 'item']);
 
       if (!orgCode && !itemCode) continue;
       if (orgCode.toLowerCase().includes('total') || itemCode.toLowerCase().includes('total')) continue;
@@ -264,13 +264,13 @@ export class ExcelParserService {
       }
       seenKeys.add(key);
 
-      const beginOnhandKg = Math.round(this.parseNumber(this.getCell(row, ['begin onhand', 'begin on hand']), 'Begin Onhand'));
-      const qtyReceiveKg = Math.round(this.parseNumber(this.getCell(row, ['qty receive', 'receive']), 'Qty Receive'));
-      const wipIssueKg = Math.round(this.parseNumber(this.getCell(row, ['wip issue', 'issue']), 'Wip Issue'));
-      const transferInKg = Math.round(this.parseNumber(this.getCell(row, ['transfer in']), 'Transfer In'));
-      const transferOutKg = Math.round(this.parseNumber(this.getCell(row, ['transfer out']), 'Transfer Out'));
-      const adjustKg = Math.round(this.parseNumber(this.getCell(row, ['adjust', 'adjustment']), 'Adjust'));
-      const closedOnhandKg = Math.round(this.parseNumber(this.getCell(row, ['closed onhand', 'closed on hand']), 'Closed Onhand'));
+      const beginOnhandKg = Math.round(this.parseNumber(this.getCell(row, ['begin onhand qty', 'begin onhand', 'begin on hand', 'begin on hand qty', 'begin qty']), 'Begin Onhand'));
+      const qtyReceiveKg = Math.round(this.parseNumber(this.getCell(row, ['qty receive', 'qty receive qty', 'receive qty', 'receive']), 'Qty Receive'));
+      const wipIssueKg = Math.round(this.parseNumber(this.getCell(row, ['wip issue qty', 'wip issue', 'issue qty', 'issue']), 'Wip Issue'));
+      const transferInKg = Math.round(this.parseNumber(this.getCell(row, ['transfer in qty', 'transfer in']), 'Transfer In'));
+      const transferOutKg = Math.round(this.parseNumber(this.getCell(row, ['transfer out qty', 'transfer out']), 'Transfer Out'));
+      const adjustKg = Math.round(this.parseNumber(this.getCell(row, ['adjust qty', 'adjustment qty', 'adjust', 'adjustment']), 'Adjust'));
+      const closedOnhandKg = Math.round(this.parseNumber(this.getCell(row, ['closed onhand qty', 'closed onhand', 'closed on hand', 'closed on hand qty', 'closed qty']), 'Closed Onhand'));
 
       result.push({
         orgCode,
@@ -381,13 +381,13 @@ export class ExcelParserService {
       workbook.Sheets[sheetName],
       'PO Receipt (POR)',
       [
-        { name: 'WH', aliases: ['wh', 'warehouse', 'org code'] },
-        { name: 'Code Vendor', aliases: ['code vendor', 'vendor account', 'vendor'] },
-        { name: 'POR', aliases: ['por', 'receipt number'] },
-        { name: 'Date Delivery', aliases: ['date delivery', 'delivery date'] },
-        { name: 'Code RM', aliases: ['code rm', 'item code', 'item number'] },
-        { name: 'Unit', aliases: ['unit', 'uom'] },
-        { name: 'Quantity', aliases: ['quantity', 'received qty'] },
+        { name: 'WH', aliases: ['wh', 'warehouse', 'org code', 'kho'] },
+        { name: 'Code Vendor', aliases: ['code vendor', 'vendor account', 'vendor', 'mã ncc'] },
+        { name: 'POR', aliases: ['por', 'receipt number', 'por number', 'phiếu nhận'] },
+        { name: 'Date Delivery', aliases: ['date delivery', 'delivery date', 'ngày nhận', 'ngay delivery'] },
+        { name: 'Code RM', aliases: ['code rm', 'item code', 'item number', 'mã nl'] },
+        { name: 'Unit', aliases: ['unit', 'uom', 'đvt'] },
+        { name: 'Quantity', aliases: ['quantity / số lượng', 'quantity / so luong', 'quantity', 'received qty', 'số lượng', 'so luong'] },
       ],
     );
 
@@ -396,16 +396,16 @@ export class ExcelParserService {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const orgCode = this.getCell(row, ['wh', 'warehouse', 'org code']);
-      const vendorAccount = this.getCell(row, ['code vendor', 'vendor account', 'vendor']);
-      const poNumber = this.getCell(row, ['po number', 'purchase order']) || null;
-      const receiptNumber = this.getCell(row, ['por', 'receipt number']);
-      const deliveryDateStr = this.getCell(row, ['date delivery', 'delivery date']);
-      const itemCode = this.getCell(row, ['code rm', 'item code', 'item number']);
-      const unit = this.getCell(row, ['unit', 'uom']);
-      const qtyStr = this.getCell(row, ['quantity', 'received qty']);
+      const orgCode = this.getCell(row, ['wh', 'warehouse', 'org code', 'kho']);
+      const vendorAccount = this.getCell(row, ['code vendor', 'vendor account', 'vendor', 'mã ncc']);
+      const poNumber = this.getCell(row, ['po number', 'purchase order', 'số po']) || null;
+      const receiptNumber = this.getCell(row, ['por', 'receipt number', 'por number', 'phiếu nhận']);
+      const deliveryDateStr = this.getCell(row, ['date delivery', 'delivery date', 'ngày nhận', 'ngay delivery']);
+      const itemCode = this.getCell(row, ['code rm', 'item code', 'item number', 'mã nl']);
+      const unit = this.getCell(row, ['unit', 'uom', 'đvt']);
+      const qtyStr = this.getCell(row, ['quantity / số lượng', 'quantity / so luong', 'quantity', 'received qty', 'số lượng', 'so luong']);
       const pagNumber = this.getCell(row, ['pag', 'pag number']) || null;
-      const truckNumber = this.getCell(row, ['truck number', 'truck']) || null;
+      const truckNumber = this.getCell(row, ['truck number', 'truck', 'biển số xe', 'xe', 'số xe']) || null;
 
       if (!orgCode && !receiptNumber && !itemCode) continue;
       if (!orgCode || !receiptNumber || !itemCode) continue;

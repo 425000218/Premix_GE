@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import 'multer';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PaginationMeta } from '../../common/dto/pagination.dto.js';
 import { ProcedureService } from '../../database/procedure.service.js';
 import { ImportForecastQueryDto } from './dto/import-forecast-query.dto.js';
@@ -382,6 +384,222 @@ export class ImportService {
       importedAt: b.ImportedAt,
       importedBy: b.ImportedBy,
       issues,
+    };
+  }
+
+  /**
+   * Quét thư mục chứa các folder ngày chốt ERP theo quy tắc ddmmyy
+   */
+  async scanDirectory(targetDir?: string) {
+    let resolvedDir = '';
+    const possiblePaths = [
+      targetDir,
+      targetDir ? path.resolve(process.cwd(), targetDir) : null,
+      'c:\\Premix_GE\\Mock_Export_Data',
+      path.resolve(process.cwd(), 'Mock_Export_Data'),
+      path.resolve(process.cwd(), '../Mock_Export_Data'),
+    ].filter(Boolean) as string[];
+
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+        resolvedDir = p;
+        break;
+      }
+    }
+
+    if (!resolvedDir) {
+      throw new BadRequestException(
+        `Không tìm thấy thư mục nguồn dữ liệu. Đã thử: ${possiblePaths.join(', ')}`,
+      );
+    }
+
+    const entries = fs.readdirSync(resolvedDir);
+    const ddmmyyFolders = entries.filter((e) => {
+      const fullSub = path.join(resolvedDir, e);
+      return /^\d{6}$/.test(e) && fs.statSync(fullSub).isDirectory();
+    });
+
+    // Lấy lịch sử các batch DAILY_SET từ DB để so khớp trạng thái
+    const historyRows = await this.procedureService
+      .executeProcedure<any>('dbo.usp_Import_GetHistory', {
+        BatchType: 'DAILY_SET',
+        Status: 'COMPLETED',
+        Page: 1,
+        PageSize: 1000,
+      })
+      .catch(() => []);
+
+    const importedMap = new Map<string, any>();
+    for (const h of historyRows || []) {
+      const snap = h.SnapshotDate ? String(h.SnapshotDate).slice(0, 10) : '';
+      const cutoff = h.CutoffDate ? String(h.CutoffDate).slice(0, 10) : '';
+      if (snap) importedMap.set(snap, h);
+      if (cutoff) importedMap.set(cutoff, h);
+    }
+
+    const folders = ddmmyyFolders.map((fName) => {
+      const subPath = path.join(resolvedDir, fName);
+      const day = parseInt(fName.slice(0, 2), 10);
+      const month = parseInt(fName.slice(2, 4), 10);
+      const year = 2000 + parseInt(fName.slice(4, 6), 10);
+      const cutoffDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+      const cD = new Date(Date.UTC(year, month - 1, day));
+      const sD = new Date(cD.getTime() - 86400000);
+      const snapshotDate = sD.toISOString().slice(0, 10);
+
+      const files = fs.readdirSync(subPath).filter((fn) => fn.match(/\.(xlsx|xls)$/i));
+      const onHand = files.find((x) => /on\s*hand/i.test(x)) || null;
+      const movement = files.find((x) => /movement/i.test(x)) || null;
+      const poPending = files.find((x) => /po\s*pending/i.test(x)) || null;
+      const poReceipt = files.find((x) => /po\s*receipt/i.test(x)) || null;
+      const transfer = files.find((x) => /transfer/i.test(x)) || null;
+
+      const missingFiles: string[] = [];
+      if (!onHand) missingFiles.push('On Hand (SOH)');
+      if (!movement) missingFiles.push('Inventory Movement');
+      if (!poPending) missingFiles.push('PO Pending');
+      if (!poReceipt) missingFiles.push('PO Receipt');
+      if (!transfer) missingFiles.push('Transfer Order');
+
+      const isComplete = missingFiles.length === 0;
+
+      // So khớp xem ngày này đã nạp chưa
+      const importedRecord = importedMap.get(snapshotDate) || importedMap.get(cutoffDate);
+
+      return {
+        folderName: fName,
+        folderPath: subPath,
+        cutoffDate,
+        snapshotDate,
+        isComplete,
+        files: {
+          onHand,
+          movement,
+          poPending,
+          poReceipt,
+          transfer,
+        },
+        missingFiles,
+        importStatus: importedRecord ? ('IMPORTED' as const) : ('NOT_IMPORTED' as const),
+        importedBatchId: importedRecord ? Number(importedRecord.BatchID) : null,
+        importedAt: importedRecord ? importedRecord.ImportedAt : null,
+        totalRows: importedRecord ? Number(importedRecord.TotalRows) : 0,
+      };
+    });
+
+    // Sắp xếp theo ngày Cutoff tăng dần
+    folders.sort((a, b) => a.cutoffDate.localeCompare(b.cutoffDate));
+
+    return {
+      baseDir: resolvedDir,
+      totalFolders: folders.length,
+      completeFolders: folders.filter((f) => f.isComplete).length,
+      importedFolders: folders.filter((f) => f.importStatus === 'IMPORTED').length,
+      pendingFolders: folders.filter((f) => f.importStatus === 'NOT_IMPORTED' && f.isComplete).length,
+      folders,
+    };
+  }
+
+  /**
+   * Nạp trực tiếp một folder đã quét từ ổ đĩa máy chủ/local
+   */
+  async importScannedFolder(
+    folderPath: string,
+    importedBy: string,
+    dryRun: boolean = false,
+    explicitSnapshotDate?: string,
+  ) {
+    if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+      throw new BadRequestException(`Thư mục "${folderPath}" không tồn tại.`);
+    }
+
+    const files = fs.readdirSync(folderPath).filter((fn) => fn.match(/\.(xlsx|xls)$/i));
+    const onHandName = files.find((x) => /on\s*hand/i.test(x));
+    const movementName = files.find((x) => /movement/i.test(x));
+    const poPendingName = files.find((x) => /po\s*pending/i.test(x));
+    const poReceiptName = files.find((x) => /po\s*receipt/i.test(x));
+    const transferName = files.find((x) => /transfer/i.test(x));
+
+    if (!onHandName || !movementName || !poPendingName || !poReceiptName || !transferName) {
+      throw new BadRequestException(`Thư mục "${folderPath}" thiếu file ERP bắt buộc.`);
+    }
+
+    const createMulterFile = (fileName: string): Express.Multer.File => {
+      const fullPath = path.join(folderPath, fileName);
+      const buffer = fs.readFileSync(fullPath);
+      return {
+        fieldname: '',
+        originalname: fileName,
+        encoding: '7bit',
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        size: buffer.length,
+        buffer,
+        stream: null as any,
+        destination: '',
+        filename: fileName,
+        path: fullPath,
+      };
+    };
+
+    const dailyFiles: DailySetFiles = {
+      onHand: [createMulterFile(onHandName)],
+      movement: [createMulterFile(movementName)],
+      poPending: [createMulterFile(poPendingName)],
+      poReceipt: [createMulterFile(poReceiptName)],
+      transfer: [createMulterFile(transferName)],
+    };
+
+    return await this.importDailySet(dailyFiles, importedBy, dryRun, explicitSnapshotDate);
+  }
+
+  /**
+   * Nạp hàng loạt nhiều folder đã quét theo thứ tự thời gian
+   */
+  async batchImportScannedFolders(
+    folderPaths: string[],
+    importedBy: string,
+    dryRun: boolean = false,
+  ) {
+    if (!folderPaths || folderPaths.length === 0) {
+      throw new BadRequestException('Danh sách thư mục cần nạp không được để trống.');
+    }
+
+    const results: any[] = [];
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const fPath of folderPaths) {
+      try {
+        const res = await this.importScannedFolder(fPath, importedBy, dryRun);
+        results.push({
+          folderPath: fPath,
+          status: 'SUCCESS',
+          batchId: res.batchId,
+          snapshotDate: res.snapshotDate,
+          cutoffDate: res.cutoffDate,
+          totalRows: res.totalRows,
+          issueCount: res.issueCount,
+        });
+        successCount++;
+      } catch (err: any) {
+        failedCount++;
+        results.push({
+          folderPath: fPath,
+          status: 'FAILED',
+          error: err.message,
+        });
+        // Dừng lại nếu lỗi để đảm bảo tính toàn vẹn chuỗi dữ liệu tồn kho lũy kế
+        break;
+      }
+    }
+
+    return {
+      total: folderPaths.length,
+      successCount,
+      failedCount,
+      isDryRun: dryRun,
+      items: results,
     };
   }
 }

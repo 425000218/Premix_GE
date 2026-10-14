@@ -55,4 +55,56 @@ export const importApi = {
       totalPages: raw.meta?.totalPages || 1,
     };
   },
+
+  scanDirectory: async (rootPath?: string): Promise<{
+    baseDir: string;
+    totalFolders: number;
+    completeFolders: number;
+    importedFolders: number;
+    pendingFolders: number;
+    folders: {
+      folderName: string;
+      folderPath: string;
+      cutoffDate: string;
+      snapshotDate: string;
+      isComplete: boolean;
+      files: {
+        onHand: string | null;
+        movement: string | null;
+        poPending: string | null;
+        poReceipt: string | null;
+        transfer: string | null;
+      };
+      missingFiles: string[];
+      importStatus: 'IMPORTED' | 'NOT_IMPORTED';
+      importedBatchId: number | null;
+      importedAt: string | null;
+      totalRows: number;
+    }[];
+  }> => {
+    const res = await apiClient.get('/import/scan-directory', {
+      params: rootPath ? { rootPath } : {},
+    });
+    return res.data?.data || res.data;
+  },
+
+  importScannedFolder: async (payload: {
+    folderPath: string;
+    snapshotDate?: string;
+    dryRun?: boolean;
+    forceOverwrite?: boolean;
+  }) => {
+    const res = await apiClient.post('/import/import-scanned-folder', payload);
+    return res.data?.data || res.data;
+  },
+
+  batchImportScanned: async (payload: {
+    rootPath?: string;
+    folderNames?: string[];
+    dryRun?: boolean;
+    forceOverwrite?: boolean;
+  }) => {
+    const res = await apiClient.post('/import/batch-import-scanned', payload);
+    return res.data?.data || res.data;
+  },
 };
